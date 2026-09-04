@@ -42,7 +42,7 @@ export function ChatPanel({
   return (
     <section className="card-elevated flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
       <div className="border-border flex items-center gap-2 border-b px-5 py-4">
-        <ChatIcon className="text-primary h-4.5 w-4.5" />
+        <ChatIcon className="text-muted-foreground h-4.5 w-4.5" />
         <h2 className="font-serif text-[15px] font-semibold tracking-tight">Chat</h2>
       </div>
 
@@ -65,9 +65,9 @@ export function ChatPanel({
                   key={action}
                   type="button"
                   onClick={() => submit(action)}
-                  className="border-border bg-background hover:border-primary/40 hover:bg-primary/10 group inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[13.5px] font-medium transition-colors"
+                  className="border-border bg-background hover:border-foreground/25 hover:bg-accent text-foreground/80 group inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[13.5px] font-medium transition-colors"
                 >
-                  <SearchIcon className="text-muted-foreground group-hover:text-primary h-3.5 w-3.5 transition-colors" />
+                  <SearchIcon className="text-muted-foreground group-hover:text-foreground/70 h-3.5 w-3.5 transition-colors" />
                   {action}
                 </button>
               ))}
@@ -102,7 +102,7 @@ export function ChatPanel({
             placeholder="Ask a question about the archive..."
             rows={1}
             disabled={disabled}
-            className="border-border bg-background focus:border-primary focus:ring-primary/30 max-h-32 min-h-11 flex-1 resize-none rounded-lg border px-3.5 py-2.5 text-[14px] outline-none transition-colors focus:ring-2 disabled:opacity-60"
+            className="border-border bg-background focus:border-foreground/30 focus:ring-foreground/10 max-h-32 min-h-11 flex-1 resize-none rounded-lg border px-3.5 py-2.5 text-[14px] outline-none transition-colors focus:ring-2 disabled:opacity-60"
           />
           <button
             type="submit"

@@ -6,7 +6,7 @@ export function SourcesPanel({ sources }: { sources: Source[] | null }) {
   return (
     <aside className="card-elevated flex h-full w-72 shrink-0 flex-col overflow-hidden rounded-xl">
       <div className="border-border flex items-center gap-2 border-b px-5 py-4">
-        <ScrollIcon className="text-primary h-4.5 w-4.5" />
+        <ScrollIcon className="text-muted-foreground h-4.5 w-4.5" />
         <h2 className="font-serif text-[15px] font-semibold tracking-tight">
           Sources
         </h2>

@@ -11,7 +11,7 @@ export function AnswerCard({
   return (
     <div className="space-y-2.5">
       <div className="flex justify-end">
-        <p className="bg-primary text-primary-foreground max-w-[80%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-relaxed font-medium shadow-sm">
+        <p className="max-w-[80%] rounded-2xl rounded-br-md bg-stone-700 px-4 py-2.5 text-[14px] leading-relaxed font-medium text-stone-50 shadow-sm">
           {question}
         </p>
       </div>
@@ -19,9 +19,9 @@ export function AnswerCard({
       <div className="flex flex-col items-start">
         {!response ? (
           <div className="border-border bg-card flex max-w-[80%] items-center gap-1.5 rounded-2xl rounded-bl-md border px-4 py-3.5">
-            <span className="bg-primary/60 h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:-0.3s]" />
-            <span className="bg-primary/60 h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:-0.15s]" />
-            <span className="bg-primary/60 h-1.5 w-1.5 animate-bounce rounded-full" />
+            <span className="bg-muted-foreground/50 h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:-0.3s]" />
+            <span className="bg-muted-foreground/50 h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:-0.15s]" />
+            <span className="bg-muted-foreground/50 h-1.5 w-1.5 animate-bounce rounded-full" />
           </div>
         ) : (
           <div className="max-w-[80%]">

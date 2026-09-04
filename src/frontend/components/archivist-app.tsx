@@ -32,7 +32,7 @@ export function ArchivistApp() {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <header className="border-border flex shrink-0 items-center gap-3 border-b px-6 py-4">
-        <span className="border-primary/30 bg-primary/10 text-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
+        <span className="border-border text-muted-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
           <FlameIcon className="h-4.5 w-4.5" />
         </span>
         <div>

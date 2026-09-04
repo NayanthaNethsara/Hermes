@@ -1,4 +1,4 @@
-import type { ReasoningStep } from "@/constants/mock/mockResponses";
+import type { ReasoningStep } from "@/types/archivist";
 import { CompassIcon } from "@/components/icons";
 
 export function ReasoningTracePanel({

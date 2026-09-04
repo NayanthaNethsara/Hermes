@@ -1,4 +1,4 @@
-import type { Source } from "@/constants/mock/mockResponses";
+import type { Source } from "@/types/archivist";
 import { TrustBadge } from "@/components/trust-badge";
 import { ScrollIcon } from "@/components/icons";
 

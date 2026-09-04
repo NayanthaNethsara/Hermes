@@ -1,4 +1,4 @@
-import type { Contradiction } from "@/constants/mock/mockResponses";
+import type { Contradiction } from "@/types/archivist";
 import { AlertIcon } from "@/components/icons";
 
 export function ContradictionBanner({

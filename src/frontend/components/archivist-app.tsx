@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MOCK_EXCHANGES } from "@/constants/mock/mockResponses";
+import { askArchivist, ArchivistApiError } from "@/lib/api";
 import { ChatPanel, type ChatTurn } from "@/components/chat-panel";
 import { SourcesPanel } from "@/components/sources-panel";
 import { ReasoningTracePanel } from "@/components/reasoning-trace-panel";
@@ -11,19 +11,35 @@ export function ArchivistApp() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [isThinking, setIsThinking] = useState(false);
 
-  const handleSubmit = (question: string) => {
+  const handleSubmit = async (question: string) => {
     setTurns((prev) => [...prev, { question, response: null }]);
     setIsThinking(true);
 
-    const mock = MOCK_EXCHANGES[turns.length % MOCK_EXCHANGES.length];
-    window.setTimeout(() => {
+    const setLastResponse = (response: ChatTurn["response"]) => {
       setTurns((prev) => {
         const next = [...prev];
-        next[next.length - 1] = { question, response: mock.response };
+        next[next.length - 1] = { question, response };
         return next;
       });
+    };
+
+    try {
+      const response = await askArchivist(question);
+      setLastResponse(response);
+    } catch (error) {
+      const message =
+        error instanceof ArchivistApiError
+          ? error.message
+          : "Sorry, something went wrong answering that question.";
+      setLastResponse({
+        answer: message,
+        reasoning_steps: [],
+        sources: [],
+        contradictions: [],
+      });
+    } finally {
       setIsThinking(false);
-    }, 600);
+    }
   };
 
   const latestAnswered = [...turns].reverse().find((t) => t.response);

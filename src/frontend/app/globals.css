@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--primary);
+}
+
+/* Scholarly-archive palette: warm ash charcoal, parchment ink, and a single
+   candlelight-gold accent. Deliberately one theme, not a light/dark pair —
+   this is the product's identity, not a preference. */
+:root {
+  --background: #171513;
+  --foreground: #ece6d9;
+  --card: #1f1c19;
+  --card-foreground: #ece6d9;
+  --muted: #251f1a;
+  --muted-foreground: #a89a86;
+  --primary: #c9973f;
+  --primary-foreground: #211705;
+  --accent: #2a251e;
+  --accent-foreground: #ece6d9;
+  --border: #332c24;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground overflow-x-hidden;
+  }
+  html {
+    @apply overflow-x-hidden font-sans;
+  }
+}
+
+@utility font-serif {
+  font-family: var(--font-serif);
+}
+
+@utility card-elevated {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.24),
+    0 8px 24px -12px rgba(0, 0, 0, 0.45);
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 14%, transparent)
+    transparent;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--foreground) 14%, transparent);
+    border-radius: 9999px;
+  }
+}

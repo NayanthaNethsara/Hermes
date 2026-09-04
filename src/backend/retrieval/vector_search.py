@@ -86,23 +86,44 @@ def search_chunks(query: str, top_k: int = 5) -> list[dict]:
         include=["documents", "metadatas"],
     )
 
-    chunks = []
-    ids = results["ids"][0]
-    documents = results["documents"][0]
-    metadatas = results["metadatas"][0]
-    for chunk_id, text, metadata in zip(ids, documents, metadatas):
-        page = metadata["page"]
-        chunks.append(
-            {
-                "chunk_id": chunk_id,
-                "text": text,
-                "source_doc": metadata["source_doc"],
-                "page": None if page == -1 else page,
-                "source_type": metadata["source_type"],
-                "trust_tier": metadata["trust_tier"],
-            }
+    return [
+        _to_chunk_dict(chunk_id, text, metadata)
+        for chunk_id, text, metadata in zip(
+            results["ids"][0], results["documents"][0], results["metadatas"][0]
         )
-    return chunks
+    ]
+
+
+def get_chunks_by_ids(chunk_ids: list[str]) -> list[dict]:
+    """Fetch specific chunks by id, in the same shape as search_chunks.
+
+    Used to resolve graph_search results (which only carry a
+    source_chunk_id, not the full chunk) back into full chunk dicts with
+    real text/source_doc/page for citation. Needs no embedding, so no
+    Voyage API call or key is required.
+    """
+    if not chunk_ids:
+        return []
+    collection = _get_collection()
+    result = collection.get(ids=list(chunk_ids), include=["documents", "metadatas"])
+    return [
+        _to_chunk_dict(chunk_id, text, metadata)
+        for chunk_id, text, metadata in zip(
+            result["ids"], result["documents"], result["metadatas"]
+        )
+    ]
+
+
+def _to_chunk_dict(chunk_id: str, text: str, metadata: dict) -> dict:
+    page = metadata["page"]
+    return {
+        "chunk_id": chunk_id,
+        "text": text,
+        "source_doc": metadata["source_doc"],
+        "page": None if page == -1 else page,
+        "source_type": metadata["source_type"],
+        "trust_tier": metadata["trust_tier"],
+    }
 
 
 if __name__ == "__main__":

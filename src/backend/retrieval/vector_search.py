@@ -76,6 +76,7 @@ def search_chunks(query: str, top_k: int = 5) -> list[dict]:
     page, source_type, trust_tier. `page` is None when the source chunk
     has no known page (e.g. it came from a .txt/.docx/image file).
     """
+    require_voyage_api_key()  # fail fast, before the retried embed_query call
     collection = _get_collection()
     embedding = embed_query(query)
 

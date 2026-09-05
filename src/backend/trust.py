@@ -14,12 +14,17 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
 
-import requests
-from dotenv import load_dotenv
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from dotenv import load_dotenv  # noqa: E402
+
+from src.backend import llm  # noqa: E402
+from src.backend.llm import require_openrouter_config  # noqa: E402,F401
 
 load_dotenv()
 
@@ -36,6 +41,13 @@ TRUST_TIERS = {
 # Tunable via .env because this is the single biggest consumer of the
 # OpenRouter free-tier request budget (see SETUP.md "API budget").
 MAX_PAIRS_CHECKED = int(os.environ.get("CONTRADICTION_MAX_PAIRS", "5"))
+
+# How many contradiction checks to run at once. These are independent,
+# network-bound calls, so running them concurrently cuts the slowest part
+# of a hop from (pairs x per-call latency) down to roughly one call.
+# Kept modest to stay well inside OpenRouter's ~20 requests/minute free
+# tier - raising it risks trading latency for 429s.
+CONTRADICTION_WORKERS = int(os.environ.get("CONTRADICTION_WORKERS", "5"))
 
 # Verdicts already obtained from the LLM, keyed by the pair of chunk_ids.
 # The orchestrator calls the critic once per search hop on a growing
@@ -62,24 +74,6 @@ CONTRADICTION_SYSTEM_PROMPT = (
     '"topic": ""}.'
 )
 
-
-def require_openrouter_config() -> tuple[str, str, str]:
-    """Fetch OpenRouter config or fail fast with a clear message.
-
-    Checked up front (not inside the retried call_llm) so a missing key
-    fails immediately instead of being retried five times by tenacity and
-    surfacing as an opaque RetryError.
-    """
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    model = os.environ.get("OPENROUTER_MODEL")
-    if not api_key or not model:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY and OPENROUTER_MODEL must be set - copy "
-            "configuration-example/.env.example to .env at the repo root "
-            "and fill them in"
-        )
-    return api_key, base_url, model
 
 
 def _keywords(text: str) -> set[str]:
@@ -113,56 +107,35 @@ def _pair_key(chunk_a: dict, chunk_b: dict) -> frozenset:
     return frozenset((chunk_a["chunk_id"], chunk_b["chunk_id"]))
 
 
-def _is_retryable_api_error(exc: BaseException) -> bool:
-    """True for transient errors worth retrying (network hiccup, timeout,
-    429 rate-limit, 5xx, or a 404 from OpenRouter) - False for other 4xx
-    client errors (malformed request, bad auth), which are deterministic
-    and will fail identically on every retry.
+def _check_pair(chunk_a: dict, chunk_b: dict) -> dict | None:
+    """Ask the LLM whether one pair conflicts, returning the parsed verdict.
 
-    404 is retried here because OpenRouter's free-tier models return it
-    for "this model is temporarily unavailable for free" - a transient
-    provider-capacity issue, not a permanent one. A genuinely bad/unknown
-    model ID gets a 400 from OpenRouter instead (confirmed empirically),
-    so this doesn't mask real config typos."""
-    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
-        return exc.response.status_code in (404, 429) or exc.response.status_code >= 500
-    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+    Safe to run in a worker thread: it touches no shared state and never
+    raises, so one bad pair can't take down the whole check.
+    """
+    try:
+        return _parse_conflict_response(_call_llm(chunk_a, chunk_b))
+    except Exception as exc:  # noqa: BLE001 - one bad pair must not stop the check
+        print(
+            f"WARNING: skipping contradiction check for "
+            f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}: {exc}"
+        )
+        return None
 
 
-@retry(
-    retry=retry_if_exception(_is_retryable_api_error),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
-    stop=stop_after_attempt(6),
-)
 def _call_llm(chunk_a: dict, chunk_b: dict) -> str:
-    """Ask the configured OpenRouter model whether two passages conflict.
-    Retries with exponential backoff (2s, 4s, 8s, 16s, 30s - ~60s total) on transient errors
-    since the free tier rate-limits - not on a 4xx client error, which
-    would never succeed no matter how many retries. Returns the raw
-    response content."""
-    api_key, base_url, model = require_openrouter_config()
+    """Ask the LLM whether two passages conflict on a specific fact.
 
+    Retries and model failover are handled by src.backend.llm.chat.
+    Returns the raw response content.
+    """
     user_prompt = (
         f"Passage A (source: {chunk_a['source_doc']}):\n{chunk_a['text']}\n\n"
         f"Passage B (source: {chunk_b['source_doc']}):\n{chunk_b['text']}\n\n"
         "Do these two passages agree, or do they conflict on a specific fact? "
         'Answer in JSON: {"conflict": true/false, "topic": "..."}'
     )
-
-    response = requests.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": CONTRADICTION_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    return llm.chat(CONTRADICTION_SYSTEM_PROMPT, user_prompt)
 
 
 def _parse_conflict_response(raw_content: str) -> dict | None:
@@ -221,37 +194,41 @@ def detect_contradictions(chunks: list[dict]) -> list[dict]:
     # attempts before the caller ever finds out why).
     require_openrouter_config()
 
-    contradictions = []
-    new_calls_made = 0
+    ranked_pairs = list(_rank_candidate_pairs(chunks))
 
-    for chunk_a, chunk_b in _rank_candidate_pairs(chunks):
-        key = _pair_key(chunk_a, chunk_b)
+    # Work out which pairs actually need an LLM call before making any, so
+    # they can be run together instead of one after another.
+    pending: list[tuple[dict, dict]] = []
+    for chunk_a, chunk_b in ranked_pairs:
+        if _pair_key(chunk_a, chunk_b) in _verdict_cache:
+            continue
+        if len(pending) >= MAX_PAIRS_CHECKED:
+            break
+        pending.append((chunk_a, chunk_b))
 
-        if key in _verdict_cache:
-            result = _verdict_cache[key]
-        else:
-            if new_calls_made >= MAX_PAIRS_CHECKED:
-                # Budget for this call spent; remaining pairs stay
-                # uncompared for now (a later hop can pick them up).
-                break
-            try:
-                raw_content = _call_llm(chunk_a, chunk_b)
-                result = _parse_conflict_response(raw_content)
-            except Exception as exc:  # noqa: BLE001 - one bad pair must not stop the check
-                print(
-                    f"WARNING: skipping contradiction check for "
-                    f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}: {exc}"
-                )
-                continue
-            new_calls_made += 1
+    if pending:
+        # Each check is an independent ~4s wait on the network, so running
+        # them concurrently turns the slowest part of a hop from
+        # (pairs x 4s) into roughly 4s. Verdicts are collected here and
+        # written to the shared cache on this thread afterwards, so no
+        # worker mutates state the others can see.
+        workers = min(len(pending), CONTRADICTION_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            verdicts = list(pool.map(lambda pair: _check_pair(*pair), pending))
 
+        for (chunk_a, chunk_b), result in zip(pending, verdicts):
             if result is None:
                 print(
-                    f"WARNING: could not parse contradiction-check response for "
+                    f"WARNING: no usable contradiction verdict for "
                     f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}"
                 )
-            _verdict_cache[key] = result
+            _verdict_cache[_pair_key(chunk_a, chunk_b)] = result
 
+    # Assemble in ranked order so output stays deterministic regardless of
+    # the order the concurrent checks happened to finish in.
+    contradictions = []
+    for chunk_a, chunk_b in ranked_pairs:
+        result = _verdict_cache.get(_pair_key(chunk_a, chunk_b))
         if result and result.get("conflict"):
             contradictions.append(
                 {

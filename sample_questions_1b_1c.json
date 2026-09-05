@@ -1,0 +1,68 @@
+[
+  {
+    "qid": "1c_000",
+    "track": "1C: Searching the Way a Human Does",
+    "source": "official sample_questions.json",
+    "question": "State the precise year in the Age of Shadows that marks the true founding of Gloamreach."
+  },
+  {
+    "qid": "1c_003",
+    "track": "1C: Searching the Way a Human Does",
+    "source": "official sample_questions.json",
+    "question": "In which year was the 'Gauntlet of Sorrowfell' actually forged?"
+  },
+  {
+    "qid": "1b_003",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "To which shadowed redoubt must one journey to examine the relic long borne by Cerys Sablewood the Ashen since 356 AS?"
+  },
+  {
+    "qid": "1b_005",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "Which war was won by the organization that included Isolde Mournvale as one of its members?"
+  },
+  {
+    "qid": "1b_006",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "Which individual was a member of the faction that ultimately won the War of Drowned Light?"
+  },
+  {
+    "qid": "1b_007",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "Which accord was ultimately won by the faction of which Ederon Fellgard is a member?"
+  },
+  {
+    "qid": "1b_009",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "In what way is Halvard Crowhurst connected to the victors of the Purge of Blackport?"
+  },
+  {
+    "qid": "1b_013",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "Whose dominion encompasses the lair of the Gravemaw Wyrm?"
+  },
+  {
+    "qid": "1b_022",
+    "track": "1B: Connecting Facts Across Thousands of Pages",
+    "source": "official sample_questions.json",
+    "question": "Which war did Ravena Stormwell's own faction ultimately win?"
+  },
+  {
+    "qid": "1c_supp_01",
+    "track": "1C: Searching the Way a Human Does",
+    "source": "supplementary - written for this project, not from the official set",
+    "question": "Who repaired the artifact, and do the sources agree on it?"
+  },
+  {
+    "qid": "1c_supp_02",
+    "track": "1C: Searching the Way a Human Does",
+    "source": "supplementary - written for this project, not from the official set",
+    "question": "What does the highest-trust source say that the low-trust sources do not?"
+  }
+]

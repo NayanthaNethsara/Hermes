@@ -15,14 +15,17 @@ since it constrains how you should test, not just when.
 **1. `sample_questions.json` is the real official dev set — read it
 carefully.** It ships with the corpus (`Ashen_Era_Archive/sample_questions.json`,
 copied verbatim to the repo root) and has exactly 20 questions, tagged by
-sub-track: **11 for 1A, 7 for 1B, only 2 for 1C** (our track — "Searching
-the Way a Human Does"). The other 18 are about figure plates, portraits,
-and cross-document fact-linking questions this project doesn't attempt
-(different sub-tracks). Don't test with all 20 — 18 of them aren't things
-this system is built to answer, and doing so just burns OpenRouter budget
-for no signal. `sample_questions_1c.json` (repo root) pulls out the 2 real
-1C questions plus 4 supplementary ones written for this project — use that
-file, not the full 20.
+sub-track: **11 for 1A, 7 for 1B, 2 for 1C**.
+
+This project targets **1C (primary) + 1B (secondary)**, so 9 of the 20 are
+in scope. The 11 `1A` questions are about figure plates and portraits and
+are **deliberately out of scope** — the system has no visual understanding
+(see `docs/limitations.md`), so testing them produces guaranteed failures
+and burns budget for no signal.
+
+Use **`sample_questions_1b_1c.json`** (repo root): the 9 official in-scope
+questions plus 2 supplementary ones written for this project. Not the full
+20.
 
 The 2 real 1C questions are both about **a contested fact** ("the *true*
 founding", "*actually* forged") — that's not a coincidence. Sub-track 1C is
@@ -57,13 +60,21 @@ synthesizer call). That means:
   default settings. Plan test sessions around this — don't discover it
   mid-session the way this project did (see `docs/limitations.md` "Eval
   run blocked by OpenRouter's daily quota").
-- **Turn the budget levers down while doing exploratory/repeated testing**,
-  and only test at full/default settings for the small number of runs you
-  actually want to be representative of the real demo experience:
+- **Set the budget levers before you test anything.** At stock settings a
+  measured question cost **41 API calls and ~110 seconds** — that is
+  *fewer than two questions per key per day*, which is not enough to run a
+  demo, let alone test one. Put these in `.env`:
   ```
-  CONTRADICTION_MAX_PAIRS=2
   MAX_SEARCH_HOPS=3
+  CONTRADICTION_MAX_PAIRS=3
   ```
+  That's ~16 calls and ~45-60s per question (3 questions/day/key), with no
+  observed quality loss — the answer was already settled by hop 2 on every
+  question tested. Raise them back only for a final representative run.
+- **Expect 45-110 seconds per question, with no progress indicator.** The
+  UI shows a spinner the whole time (`/api/ask` doesn't stream). This is
+  documented, not a hang. If you're demoing live, ask the question and
+  narrate while it works.
 - **Don't mix manual poking (curl, Postman, the frontend) with a real eval
   run on the same key on the same day.** A handful of manual test questions
   can eat the budget an eval run needs. If you have multiple team members'
@@ -175,7 +186,7 @@ this part — panel behavior is easier to judge visually than in raw JSON.
 ## 4. Running the eval harness for a repeatable pass
 
 ```bash
-python -m src.eval.run_eval --questions-path sample_questions_1c.json
+python -m src.eval.run_eval --questions-path sample_questions_1b_1c.json
 ```
 
 Writes `results/eval_log.json`: per-question answer, reasoning step count,
@@ -190,11 +201,20 @@ After it finishes, open `results/eval_log.json` and for each question ask:
 3. If two sources plausibly disagree on this topic, did `contradictions`
    catch it?
 
-This costs real budget (6 questions × up to ~36 calls worst case). Budget
-levers (§1) matter more here than anywhere else — turn them down for a
-first pass, then do one full-settings run near the end once you're
-confident nothing else needs fixing, since that run is the one worth
-spending full budget on.
+This costs real budget (11 questions × up to ~36 calls worst case — far
+more than one day's free quota). Budget levers (§1) matter more here than
+anywhere else. Practical approach: run a **subset** first
+(`--questions-path` accepts any JSON file, so make a 2-3 question file),
+with the levers turned down, and only do a full-settings run over the
+whole set once you're confident nothing else needs fixing.
+
+**For 1B specifically**, check the reasoning trace shows the answer being
+*assembled across documents* rather than found in one place — that's the
+whole point of the sub-track. E.g. for "which accord was won by the faction
+Ederon Fellgard is a member of?", the trace should show it establishing his
+faction first, then that faction's accord. If it answers correctly but the
+trace shows one lookup, say so honestly in the report rather than claiming
+multi-hop reasoning it didn't do.
 
 ---
 
@@ -225,8 +245,8 @@ of it is checkable without more coding.
 | **Human-AI collaboration (15%)** — evidence of directing, not one-shotting | `docs/decisions.md` and `docs/limitations.md` already read as a real debugging log (kept honest as you go) — confirm they're still current with today's findings. Chat logs exported (see below). |
 | **Engineering best practices (15%)** — git discipline, reproducibility | `git log --oneline` reads as real incremental work, not one giant dump. A judge can `git clone` + follow `SETUP.md` alone — try this yourself on a clean checkout if you have time. |
 | **Technical judgment (10%)** — trade-offs and failures documented | `docs/decisions.md` and `docs/limitations.md` cover the real trade-offs (model dead-ends, rate limits, chunk-id collisions, OCR gaps) — this is in good shape already. |
-| **Impact & relevance (10%)** — convincingly addresses 1C specifically | The demo should center on a genuinely multi-hop, contested-fact question (§3 above), not a single-lookup one. |
-| **Presentation (10%)** — video, docs, diagrams | `docs/diagrams/` doesn't exist yet — the required structure (`CLAUDE.md`, challenge doc 5.2) expects it. Add at least the architecture diagram. |
+| **Impact & relevance (10%)** — convincingly addresses 1C + 1B | The demo should show one contested-fact question (1C) *and* one cross-document chain question (1B), not two of the same kind. |
+| **Presentation (10%)** — video, docs, diagrams | `docs/diagrams/architecture.md` exists now. Confirm the video covers both claimed sub-tracks. |
 | Mandatory: `ai_usage/ai-usage-disclosure.md` | Exists now — re-read it and make sure it's still accurate/complete as of your last work session. |
 | Mandatory: exported AI chat logs as `.txt` in `ai_usage/` | **Not yet done as of this writing** — export before submission, and ideally after each significant session, not only once at the end. |
 | `ai_usage/claude.md` | Copy the root `CLAUDE.md` here **right before zipping** for submission (not permanently — Claude Code needs it at the root to keep reading it during development). |

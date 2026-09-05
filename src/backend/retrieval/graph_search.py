@@ -12,12 +12,24 @@ to data/graph.gpickle.
 from __future__ import annotations
 
 import pickle
+import re
 from pathlib import Path
 
 import networkx as nx
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GRAPH_PATH = REPO_ROOT / "data" / "graph.gpickle"
+
+# An entity shorter than this can't be matched usefully - it's almost always
+# a stray capitalized word ("In", "It") rather than a real name.
+MIN_ENTITY_LENGTH = 3
+
+# If a non-exact entity matches more nodes than this, it's too generic to
+# mean anything and is skipped entirely. Without this guard a single junk
+# entity seeds a frontier of thousands of nodes, and a 2-hop walk from
+# there returns most of the graph - measured at 79,617 edges / 5,615
+# chunks (88% of the corpus) for one real question before this cap existed.
+MAX_NODES_PER_ENTITY = 50
 
 
 # The graph is read-only at query time and can be large, so it's loaded
@@ -49,9 +61,37 @@ def load_graph(force_reload: bool = False) -> nx.MultiDiGraph:
 
 
 def find_matching_nodes(graph: nx.MultiDiGraph, entity: str) -> list[str]:
-    """Return every node whose name contains `entity` (case-insensitive)."""
+    """Return nodes matching `entity`, preferring exact name matches.
+
+    Matches on whole words, not bare substrings: "Ring" must not match
+    "Cindering". An exact (case-insensitive) name match always wins and is
+    returned on its own. Otherwise whole-word partial matches are returned,
+    but only if there are few enough of them to be meaningful - an entity
+    matching more than MAX_NODES_PER_ENTITY nodes is treated as too generic
+    and matches nothing, which stops one junk entity from dragging most of
+    the graph into the answer.
+    """
+    entity = entity.strip()
+    if len(entity) < MIN_ENTITY_LENGTH:
+        return []
+
     needle = entity.lower()
-    return [node for node in graph.nodes if needle in str(node).lower()]
+    pattern = re.compile(rf"\b{re.escape(entity)}\b", re.IGNORECASE)
+
+    exact: list[str] = []
+    partial: list[str] = []
+    for node in graph.nodes:
+        name = str(node)
+        if name.lower() == needle:
+            exact.append(node)
+        elif pattern.search(name):
+            partial.append(node)
+
+    if exact:
+        return exact
+    if len(partial) > MAX_NODES_PER_ENTITY:
+        return []
+    return partial
 
 
 def search_graph(entities: list[str], max_hops: int = 2) -> list[dict]:

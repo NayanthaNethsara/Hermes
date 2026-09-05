@@ -119,6 +119,78 @@ consequence: **a full 8-question eval run needs a fresh day's quota (or a
 different key) done in one sitting**, since exploratory testing on the same
 key eats directly into the same 50/day budget the eval needs.
 
+## Sub-track 1A is not attempted — image content is invisible to the system
+
+Deliberate, measured, and worth stating plainly since the corpus contains
+70 distinct images and the official question set devotes 11 of its 20
+questions to them.
+
+Images are OCR'd to text only. That captures labels but not graphics: on
+the Weeping Lurker threat plate, OCR returns `"Weeping Lurker / THREAT
+RATING / of 10, per the Vanguard scale"` and silently drops the rating
+itself, which is drawn as a numeral inside a gauge. Any question of the
+form "according to the figure plate, what is X?" is therefore
+unanswerable — the value is not in the index at all. Same for "what
+emblem is on this banner" and "what object is this portrait holding".
+
+This is a capability gap, not a bug, and it is not hidden behind a vague
+"no visual understanding" line: a free vision model was tested against
+that exact plate and read the value correctly, so the fix is known and
+works. It was dropped on request budget (70 images to caption against a
+50-request/day free tier, competing with testing and demo runs), not
+because it couldn't be done. See `docs/decisions.md`.
+
+## Graph retrieval had no size guard until it was measured
+
+Worth keeping visible even though it's fixed, because it's the clearest
+example in this project of something that looked fine and wasn't. A single
+official question was pulling 5,615 chunks (88% of the corpus) into every
+agent prompt, caused by the word "In" being treated as an entity and then
+substring-matching thousands of graph nodes. Now capped at 15
+graph-sourced chunks per hop, with whole-word entity matching and a
+generic-entity guard.
+
+The residual limitation: entity extraction is still a regex over
+capitalized words, so multi-word names still fragment ("Age of Shadows" →
+`Age`, `Shadows`). The caps make that survivable rather than fatal, but
+proper NER would be the real fix.
+
+## The Critic almost never says "enough", so every question runs the full hop budget
+
+The clearest known weakness in the agent loop. On real questions the
+Critic returns `{"enough": false}` on every hop even when the answer has
+already been found and quoted verbatim in the retrieved evidence - one
+measured run found the answer on hop 2 and still ran hops 3, 4 and 5.
+
+Consequences: a question costs far more time and API budget than it
+needs, and the Planner fills the extra hops by rewording the same search.
+Mitigations in place are defensive rather than curative — repeated
+searches now end the loop, and contradiction checks run concurrently — but
+the underlying cause is prompt behaviour, not plumbing. The reliable lever
+is configuration:
+
+```
+MAX_SEARCH_HOPS=3
+CONTRADICTION_MAX_PAIRS=3
+```
+
+That takes a question from ~41 API calls to ~16, and from ~110s to
+roughly 45-60s, with no observed loss of answer quality on the questions
+tested (the answer was already settled by hop 2 in every case). A better
+Critic prompt — one that accepts sufficiency when a direct statement is
+present — is the real fix and hasn't been attempted, because prompt
+changes need re-testing across the question set and that costs the same
+scarce daily quota.
+
+## Answering a question is slow, and there's no progress indicator
+
+Even after the concurrency work, a question takes roughly 45-110s
+depending on the levers, because each free-tier LLM call costs ~4-10s and
+a question makes many of them. Combined with the non-streaming
+`/api/ask` (below), the user sees a spinner for a long time with no
+feedback. Worth knowing before a live demo: ask the question, then talk
+over it.
+
 ## Reasoning steps don't stream
 
 `docs/architecture.md` 4.7 describes the Reasoning Trace panel as "updating

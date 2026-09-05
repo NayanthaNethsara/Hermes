@@ -6,7 +6,9 @@ This file is read automatically by Claude Code at the start of every session in 
 
 ## What this project is
 
-**The Archivist** — an AI assistant for the SLIIT Codefest 2026 AI Competition, Sub-track 1C ("Searching the Way a Human Does"). It answers questions over the Ashen Era Archive corpus using a 3-agent loop (Planner, Critic, Synthesizer) built on top of RAG retrieval (Chroma vector search + NetworkX knowledge graph), with a trust/contradiction layer as the core differentiator.
+**The Archivist** — an AI assistant for the SLIIT Codefest 2026 AI Competition, targeting **Sub-track 1C ("Searching the Way a Human Does") as primary, with Sub-track 1B ("Connecting Facts Across Thousands of Pages") as secondary**. It answers questions over the Ashen Era Archive corpus using a 3-agent loop (Planner, Critic, Synthesizer) built on top of RAG retrieval (Chroma vector search + NetworkX knowledge graph), with a trust/contradiction layer as the core differentiator.
+
+1B is claimed because the same knowledge graph that powers multi-hop reasoning (35,604 entities / 108,588 edges over the whole corpus) is exactly the mechanism 1B asks for: linking facts that no single document contains. Sub-track 1A (embedding images/diagrams in answers) is deliberately **not** attempted — see `docs/decisions.md`.
 
 Full technical details: `docs/architecture.md`. Read that file before writing any backend code.
 

@@ -1,6 +1,7 @@
 # Technical Architecture — The Archivist
 
-**Sub-track:** 1C — Searching the Way a Human Does
+**Sub-track:** 1C — Searching the Way a Human Does (primary)
+**Also addresses:** 1B — Connecting Facts Across Thousands of Pages (secondary, via the knowledge graph)
 **This file belongs at:** `docs/architecture.md`
 
 ---

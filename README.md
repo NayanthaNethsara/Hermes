@@ -5,8 +5,11 @@ searching the way a human would — planning searches, weighing how much each
 source can be trusted, and surfacing contradictions between sources instead of
 quietly picking a side.
 
-Built for SLIIT Codefest 2026, AI Competition Sub-track 1C ("Searching the Way
-a Human Does").
+Built for SLIIT Codefest 2026, AI Competition **Sub-track 1C** ("Searching the
+Way a Human Does") as primary, and **Sub-track 1B** ("Connecting Facts Across
+Thousands of Pages") as secondary — the knowledge graph that drives multi-hop
+reasoning links facts across the whole corpus, which is exactly what 1B asks
+for.
 
 ## What it does
 

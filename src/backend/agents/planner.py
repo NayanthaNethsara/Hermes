@@ -10,11 +10,15 @@ This file does one job only - no retrieval, no critic/synthesizer logic.
 
 from __future__ import annotations
 
-import os
+import sys
+from pathlib import Path
 
-import requests
-from dotenv import load_dotenv
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from dotenv import load_dotenv  # noqa: E402
+
+from src.backend import llm  # noqa: E402
+from src.backend.llm import require_openrouter_config  # noqa: E402,F401
 
 load_dotenv()
 
@@ -32,25 +36,6 @@ PLANNER_SYSTEM_PROMPT = (
 )
 
 
-def require_openrouter_config() -> tuple[str, str, str]:
-    """Fetch OpenRouter config or fail fast with a clear message.
-
-    Checked up front (not inside the retried _call_llm) so a missing key
-    fails immediately instead of being retried five times by tenacity and
-    surfacing as an opaque RetryError.
-    """
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    model = os.environ.get("OPENROUTER_MODEL")
-    if not api_key or not model:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY and OPENROUTER_MODEL must be set - copy "
-            "configuration-example/.env.example to .env at the repo root "
-            "and fill them in"
-        )
-    return api_key, base_url, model
-
-
 def _format_chunks_so_far(chunks_so_far: list[dict]) -> str:
     if not chunks_so_far:
         return "(nothing retrieved yet)"
@@ -58,55 +43,18 @@ def _format_chunks_so_far(chunks_so_far: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _is_retryable_api_error(exc: BaseException) -> bool:
-    """True for transient errors worth retrying (network hiccup, timeout,
-    429 rate-limit, 5xx, or a 404 from OpenRouter) - False for other 4xx
-    client errors (malformed request, bad auth), which are deterministic
-    and will fail identically on every retry.
-
-    404 is retried here because OpenRouter's free-tier models return it
-    for "this model is temporarily unavailable for free" - a transient
-    provider-capacity issue, not a permanent one. A genuinely bad/unknown
-    model ID gets a 400 from OpenRouter instead (confirmed empirically),
-    so this doesn't mask real config typos."""
-    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
-        return exc.response.status_code in (404, 429) or exc.response.status_code >= 500
-    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
-
-
-@retry(
-    retry=retry_if_exception(_is_retryable_api_error),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
-    stop=stop_after_attempt(6),
-)
 def _call_llm(question: str, chunks_so_far: list[dict]) -> str:
-    """Ask the configured OpenRouter model for the next search query (or
-    DONE). Retries with exponential backoff (2s, 4s, 8s, 16s, 30s - ~60s total) on transient
-    errors since the free tier rate-limits - not on a 4xx client error,
-    which would never succeed no matter how many retries. Returns the raw
-    response content."""
-    api_key, base_url, model = require_openrouter_config()
+    """Ask the LLM for the next search query (or DONE).
 
+    Retries and model failover are handled by src.backend.llm.chat.
+    Returns the raw response content.
+    """
     user_prompt = (
         f"Question: {question}\n\n"
         f"Retrieved so far:\n{_format_chunks_so_far(chunks_so_far)}\n\n"
         "What should be searched next, or is this enough?"
     )
-
-    response = requests.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    return llm.chat(PLANNER_SYSTEM_PROMPT, user_prompt)
 
 
 def plan_next_search(question: str, chunks_so_far: list[dict]) -> str:

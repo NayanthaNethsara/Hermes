@@ -255,7 +255,204 @@ but stays in the CLI as the documented way to rebuild a smaller graph on a
 constrained request budget. The live agents (Planner/Critic/Synthesizer)
 and ingestion run on OpenRouter + Voyage throughout, per CLAUDE.md rule 3.
 
+## Claiming 1B as a secondary sub-track, but not 1A
+
+The challenge doc lets teams address more than one sub-track while warning
+that "a strong, working solution to a single sub-track will always beat a
+shallow attempt at several." Reviewed all three against what was actually
+built:
+
+**1B ("Connecting Facts Across Thousands of Pages") — claimed.** This
+needed no new capability. The knowledge graph already spans the whole
+corpus (35,604 entities, 108,588 edges) and `search_graph()` already does
+multi-hop BFS, which is precisely 1B's ask: answering questions where no
+single document holds the answer. Verified directly against the official
+1B questions — e.g. `Ederon Fellgard` → (2 hops) → `The Iron-Ring Cartel`
+→ `was victor of` → `The Leaden Accord` is a real path in the built graph.
+Claiming it is honest rather than opportunistic: the mechanism was already
+there and is now explicitly tested against the official 1B question set.
+
+**1A ("Rich Answers, Not Just Text") — deliberately not attempted.** This
+one *is* a real capability gap, and the reason is worth recording because
+it was measured, not assumed. The 11 official 1A questions ask about
+content that exists only as pixels: "what is the central emblem on the
+banner of House Morvain?", "in the portrait of X, what object are they
+holding?". Tesseract OCR captures the *text* on a figure plate but not the
+graphics: on `plate_08_creature_weeping_lurker.png` it extracted
+`"Weeping Lurker / THREAT RATING / of 10, per the Vanguard scale"` and
+dropped the actual rating, which is drawn as a large numeral inside a
+gauge. The answer (3) is simply absent from the index.
+
+A vision model fixes this — confirmed by test, not theory: a free
+OpenRouter vision model read the same plate and reported "3 (large numeral
+centered inside the gauge arc)". So 1A was *feasible*. It was rejected on
+budget, not capability: captioning the corpus's 70 distinct images costs 70
+requests against a 50/request/day free tier, before any of the testing,
+demo, and eval runs that also compete for that quota — roughly 430-600
+requests total across all three sub-tracks versus the ~150 available in the
+time remaining. Rather than ship a half-populated image index and a
+weakened 1C, 1A was dropped. Recorded in `docs/limitations.md` as a known,
+deliberate gap.
+
+## Graph search could pull most of the corpus into a single prompt
+
+Found by measuring what a real question actually retrieves, rather than
+trusting that it looked reasonable. Two compounding defects:
+
+1. `_extract_entity_candidates()` treats any capitalized word as a possible
+   entity, with a stoplist that didn't include sentence-openers. The
+   official 1C question *"**In** which year was the 'Gauntlet of Sorrowfell'
+   actually forged?"* yielded `In` as an entity.
+2. `find_matching_nodes()` matched node names by bare **substring**, so
+   `In` matched every node containing those two letters — `Cinder`,
+   `Ring`, `Iron`, `King`, and thousands more.
+
+Together these seeded a graph walk from thousands of nodes. Measured
+result for that one question: **79,617 edges returned and 5,615 chunks
+fetched — 88% of the entire 6,372-chunk corpus — all fed into the Critic
+and Synthesizer prompts**, on every subsequent hop. This silently wrecked
+answer quality (real evidence buried in noise) and token cost, and never
+surfaced earlier because every prior agent test mocked the LLM and no one
+had counted the chunks.
+
+Three fixes, each guarding a different failure mode:
+- **Whole-word matching** in `find_matching_nodes()`, with exact name
+  matches preferred and returned alone. `Ring` no longer matches
+  `Cindering`.
+- **A generic-entity guard** (`MAX_NODES_PER_ENTITY`): an entity with no
+  exact match that hits more than 50 nodes means nothing useful and is
+  skipped rather than allowed to seed a walk.
+- **A hard cap on graph-sourced chunks per hop**
+  (`MAX_GRAPH_CHUNKS_PER_HOP = 15`), ranked by how many edges reference a
+  chunk (density of connection to the query's entities) and tie-broken by
+  trust tier — so the cap keeps the *best* chunks rather than an arbitrary
+  slice.
+
+Same question after the fix: 2,787 edges, **15 chunks**, and the retrieved
+relations are now on-topic — including "Authoritative discussion of the
+disputed forging of Gauntlet of Sorrowfell → should consult Annals/Codex",
+which is the exact contested fact the question is built around.
+
+## Making a question answer in ~100s instead of ~4 minutes
+
+A real 1B question ("which war was won by the organization that included
+Isolde Mournvale?") took over a minute with no output, so the loop was
+measured rather than guessed at. One LLM call against a free-tier
+reasoning model costs **~4-10s**, and the question spent **41 calls**, so
+the wall time was simply the sum of them. Three changes, each aimed at a
+different cause:
+
+**Contradiction checks now run concurrently.** Up to 5 pairs per hop were
+compared one after another, despite being completely independent
+network-bound calls - the single largest block of time in a hop. They now
+run in a thread pool (`CONTRADICTION_WORKERS`, default 5), with verdicts
+written to the shared cache on the main thread afterwards so no worker
+mutates state another can see, and results assembled in ranked order so
+output stays deterministic. Measured on the same question: **230s of
+summed call time completed in ~112s of wall time.**
+
+**The Planner's circular searches now stop the loop.** The Critic returned
+`{"enough": false}` on *every* hop even after the answer was clearly
+found on hop 2, so the loop always ran the full 5 hops. The Planner
+responded by re-asking the same thing in different words - one run
+produced "wars won by The Silent Choir", "Which war did The Silent Choir
+win", and "The Silent Choir won which war" across three hops, all
+retrieving the same chunks for ~15 wasted calls. Queries are now compared
+as a sorted bag of significant words with plurals folded, so cosmetic
+rewording is recognised as a repeat and the loop stops and answers with
+what it has. (A query of nothing but stopwords falls back to raw text,
+otherwise every such query would look identical to every other.)
+
+**The Synthesizer no longer receives everything.** `chunks_so_far`
+accumulates across hops - measured at **80 chunks / ~152,000 characters**
+(~38k tokens) by hop 5 - and all of it went into one final prompt. It's
+now capped (`MAX_SYNTHESIS_CHUNKS`, default 25), preferring higher-trust
+sources while preserving retrieval order. This is as much a quality fix as
+a speed one: material buried in the middle of a very long prompt tends to
+be ignored by small models.
+
+The honest remaining problem is the Critic, which is too reluctant to
+declare evidence sufficient. Lowering `MAX_SEARCH_HOPS` and
+`CONTRADICTION_MAX_PAIRS` is the reliable lever; a better Critic prompt
+would be the real fix and is left as known work in
+`docs/limitations.md`.
+
+## A stray `src/backend/.env` silently overrode the real config
+
+The most expensive bug in the project to diagnose, and the most mundane
+once found. Symptom: `/api/ask` returned 500 with
+`RetryError[<Future at 0x... raised HTTPError>]`, while the *same* question
+run from a standalone script worked fine. Swapping in a fresh OpenRouter
+key changed nothing.
+
+Cause: a leftover `src/backend/.env`, containing an old API key and
+`OPENROUTER_MODEL=qwen/qwen3-235b-a22b:free` — the model that had already
+been retired from OpenRouter's free tier (documented above).
+`python-dotenv`'s bare `load_dotenv()` searches upward from the *calling
+file*, so every module under `src/backend/` found that file before the real
+root `.env`. Scripts run from the repo root loaded the correct config;
+the backend loaded the stale one. Same code, different config, depending
+on which file imported it first.
+
+That also explains an earlier misdiagnosis recorded in this file: the
+"model is intermittently unavailable" theory. The orchestrator was never
+requesting the working model at all — it was asking for the retired one
+every time, which is exactly why the 404 body helpfully said "use this
+slug instead: qwen/qwen3-235b-a22b".
+
+Fixes:
+- Removed the stray file (it was gitignored and untracked, so no key ever
+  reached git history).
+- `load_dotenv()` in the backend's config-reading modules is now **pinned
+  to the repo root** (`load_dotenv(REPO_ROOT / ".env")`). Config that
+  resolves differently depending on which file imported it first isn't
+  config.
+
+Lesson worth keeping: when identical code behaves differently in two
+contexts, suspect the environment before the code. Two days were spent
+theorising about provider flakiness that never existed.
+
+## One shared LLM client instead of four copies
+
+`planner.py`, `critic.py`, `synthesizer.py`, and `trust.py` each carried
+their own near-identical copy of the OpenRouter request, retry predicate,
+and config check. That duplication had a real cost: the retry-on-4xx bug
+had to be found and fixed four separate times, and the opaque-`RetryError`
+problem existed in four places at once.
+
+They now all call `src/backend/llm.py::chat()`. Beyond removing the
+duplication it fixes three things that were wrong in all four copies:
+
+- **Model failover.** The chain is `OPENROUTER_MODEL` followed by
+  `OPENROUTER_FALLBACK_MODELS`. A 404 ("this free model is out of
+  capacity") moves to the next model *immediately* rather than burning the
+  full ~60s backoff on a model that has nothing to give. Free-tier models
+  being withdrawn or briefly unavailable has now bitten this project
+  twice, so it's treated as an expected condition, not an outage.
+- **Errors say what happened.** `raise_for_status()` throws the response
+  body away, which is the only part explaining *why* — "Rate limit
+  exceeded: free-models-per-day" and "This model is unavailable for free"
+  are both bare 404/429s otherwise. The body is now included, and
+  `reraise=True` stops tenacity from burying the real exception inside
+  `RetryError[<Future ...>]`, which is what the frontend had been showing
+  the user.
+- **Empty responses are handled.** Reasoning models can spend their whole
+  token budget on the `reasoning` field and return `content: null`. The old
+  code passed that `None` straight to callers expecting text. It now
+  counts as that model failing, and the chain moves on — observed
+  recovering twice in a single real run.
+
 ## OpenRouter 404 is sometimes transient, not permanent — retry logic was wrong
+
+> **Later correction — the premise of this entry was wrong.** The
+> "same model 200s in isolation but 404s through the orchestrator"
+> observation below was real, but the explanation wasn't: the orchestrator
+> was loading a stray `src/backend/.env` that pinned the *retired* model,
+> so the two paths were never asking for the same model. Kept here rather
+> than deleted because the wrong hypothesis cost real time, and the
+> reasoning that produced it (and the 400-vs-404 distinction, which is
+> genuine and still used) is worth showing. See "A stray `src/backend/.env`
+> silently overrode the real config" above.
 
 Live-tested the full agent loop against OpenRouter for the first time
 (previously every orchestrator/agent test mocked the LLM call). The exact

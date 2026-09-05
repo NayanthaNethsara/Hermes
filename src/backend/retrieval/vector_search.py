@@ -17,9 +17,12 @@ import requests
 from dotenv import load_dotenv
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-load_dotenv()
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Pinned to the repo root - a bare load_dotenv() searches upward from this
+# file and can pick up a stray .env inside src/ instead. See src/backend/llm.py.
+load_dotenv(REPO_ROOT / ".env")
+
 CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 COLLECTION_NAME = "archive_chunks"
 

@@ -53,7 +53,28 @@ _NON_ENTITY_WORDS = {
     "who", "what", "when", "where", "why", "how", "which", "whose", "whom",
     "did", "does", "do", "is", "are", "was", "were", "the", "a", "an",
     "list", "find", "search", "tell", "explain", "describe", "give",
+    # Sentence-openers that get capitalized and were previously treated as
+    # entities. "In" was the worst offender: capitalized at the start of a
+    # real question, it substring-matched every node containing "in"
+    # (Cinder, Ring, Iron...) and pulled 88% of the corpus into one prompt.
+    "in", "on", "at", "of", "to", "for", "by", "with", "from", "as", "into",
+    "state", "trace", "name", "according", "summarise", "summarize",
+    "there", "any", "some", "this", "that", "these", "those", "it",
 }
+
+# Ignore capitalized fragments shorter than this - they're stray words, not
+# names, and short strings match far too many graph nodes to be useful.
+_MIN_ENTITY_LENGTH = 3
+
+# Upper bound on how many chunks a single hop may pull in via the knowledge
+# graph. Graph walks fan out fast, and every chunk retrieved here is fed to
+# the Critic and Synthesizer on every subsequent hop - so an uncapped walk
+# both destroys answer quality (the real signal is buried) and burns tokens.
+MAX_GRAPH_CHUNKS_PER_HOP = 15
+
+# Upper bound on the evidence passed to the Synthesizer in its single
+# final call. See _chunks_for_synthesis for why this matters.
+MAX_SYNTHESIS_CHUNKS = int(os.environ.get("MAX_SYNTHESIS_CHUNKS", "25"))
 
 
 def _extract_entity_candidates(text: str) -> list[str]:
@@ -74,10 +95,42 @@ def _extract_entity_candidates(text: str) -> list[str]:
         while words and words[0].lower() in _NON_ENTITY_WORDS:
             words = words[1:]
         cleaned = " ".join(words)
+        if len(cleaned) < _MIN_ENTITY_LENGTH:
+            continue
         if cleaned and cleaned not in seen:
             seen.add(cleaned)
             entities.append(cleaned)
     return entities
+
+
+_GRAPH_TRUST_PRIORITY = {"high": 0, "medium": 1, "medium-low": 2, "low": 3}
+
+
+def _rank_graph_chunk_ids(edges: list[dict], known_ids: set[str]) -> list[str]:
+    """Pick the best MAX_GRAPH_CHUNKS_PER_HOP chunk ids out of `edges`.
+
+    A chunk referenced by many edges is densely connected to the entities
+    in the query, so it's ranked above one mentioned in passing; ties break
+    towards the more trustworthy source. Chunks already retrieved
+    (`known_ids`) are excluded.
+    """
+    edge_count: dict[str, int] = {}
+    best_trust: dict[str, int] = {}
+
+    for edge in edges:
+        chunk_id = edge.get("source_chunk_id")
+        if not chunk_id or chunk_id in known_ids:
+            continue
+        edge_count[chunk_id] = edge_count.get(chunk_id, 0) + 1
+        trust = _GRAPH_TRUST_PRIORITY.get(edge.get("trust_tier"), len(_GRAPH_TRUST_PRIORITY))
+        if trust < best_trust.get(chunk_id, len(_GRAPH_TRUST_PRIORITY)):
+            best_trust[chunk_id] = trust
+
+    ranked = sorted(
+        edge_count,
+        key=lambda cid: (-edge_count[cid], best_trust[cid], cid),
+    )
+    return ranked[:MAX_GRAPH_CHUNKS_PER_HOP]
 
 
 def _gather_chunks(query: str, seen_chunk_ids: set[str]) -> list[dict]:
@@ -98,12 +151,9 @@ def _gather_chunks(query: str, seen_chunk_ids: set[str]) -> list[dict]:
             edges = []
 
         known_ids = {c["chunk_id"] for c in candidates} | seen_chunk_ids
-        edge_chunk_ids = {
-            edge["source_chunk_id"] for edge in edges if edge.get("source_chunk_id")
-        }
-        new_ids = edge_chunk_ids - known_ids
+        new_ids = _rank_graph_chunk_ids(edges, known_ids)
         if new_ids:
-            candidates.extend(vector_search.get_chunks_by_ids(list(new_ids)))
+            candidates.extend(vector_search.get_chunks_by_ids(new_ids))
 
     new_chunks = []
     local_seen: set[str] = set()
@@ -117,6 +167,56 @@ def _gather_chunks(query: str, seen_chunk_ids: set[str]) -> list[dict]:
     return new_chunks
 
 
+def _normalize_query(query: str) -> str:
+    """Reduce a search query to a form that ignores cosmetic rewording.
+
+    The Planner tends to circle the same search in different words when
+    the Critic won't accept the evidence - one real question produced
+    "wars won by The Silent Choir", "Which war did The Silent Choir win",
+    and "The Silent Choir won which war" across three hops, all
+    retrieving the same chunks. Comparing raw strings misses that, so
+    queries are compared as a sorted bag of significant words with common
+    plurals folded together.
+    """
+    words = re.findall(r"[a-z]+", query.lower())
+    significant = sorted(
+        {word.rstrip("s") for word in words if word not in _NON_ENTITY_WORDS}
+    )
+    # A query made entirely of stopwords/digits normalizes to nothing, and
+    # every such query would then look identical to every other. Fall back
+    # to the raw text so only genuinely repeated searches are treated as
+    # repeats.
+    return " ".join(significant) or query.strip().lower()
+
+
+def _chunks_for_synthesis(chunks_so_far: list[dict]) -> list[dict]:
+    """Trim the evidence handed to the Synthesizer to the best chunks.
+
+    `chunks_so_far` accumulates across hops - measured at 80 chunks and
+    ~152,000 characters (roughly 38k tokens) by hop 5 on a real question.
+    Sending all of that in one prompt is slow, expensive, and past the
+    point where a small free-tier model uses it well, since material in
+    the middle of a very long prompt tends to be ignored.
+
+    Chunks are kept in retrieval order (earlier hops answered the original
+    question more directly) but higher-trust sources are preferred when
+    trimming, so the citation list can't end up dominated by the
+    least-reliable material.
+    """
+    if len(chunks_so_far) <= MAX_SYNTHESIS_CHUNKS:
+        return chunks_so_far
+
+    ordered = sorted(
+        enumerate(chunks_so_far),
+        key=lambda pair: (
+            _GRAPH_TRUST_PRIORITY.get(pair[1].get("trust_tier"), len(_GRAPH_TRUST_PRIORITY)),
+            pair[0],
+        ),
+    )
+    kept = sorted(ordered[:MAX_SYNTHESIS_CHUNKS], key=lambda pair: pair[0])
+    return [chunk for _, chunk in kept]
+
+
 def run_archivist(question: str) -> dict:
     """Answer `question` by running the Planner/Retriever/Critic loop
     (up to MAX_HOPS times) and then handing everything gathered to the
@@ -128,6 +228,7 @@ def run_archivist(question: str) -> dict:
     """
     chunks_so_far: list[dict] = []
     seen_chunk_ids: set[str] = set()
+    seen_queries: set[str] = set()
     reasoning_steps: list[dict] = []
     contradictions: list[dict] = []
     seen_contradictions: set[tuple] = set()
@@ -138,6 +239,19 @@ def run_archivist(question: str) -> dict:
         if query == planner.DONE:
             hit_hop_cap = False
             break
+
+        # The Planner re-proposing a search it has already run means it has
+        # stopped making progress - usually because the Critic keeps saying
+        # "not enough" for evidence that is actually as good as it will get.
+        # Continuing just re-retrieves the same chunks and re-runs the
+        # contradiction checks: measured at ~15 wasted API calls and ~40
+        # wasted seconds on one real question. Stop and answer with what's
+        # been gathered instead.
+        normalized = _normalize_query(query)
+        if normalized in seen_queries:
+            print(f"WARNING: planner repeated the search {query!r} - stopping early")
+            break
+        seen_queries.add(normalized)
 
         new_chunks = _gather_chunks(query, seen_chunk_ids)
         seen_chunk_ids.update(c["chunk_id"] for c in new_chunks)
@@ -175,7 +289,9 @@ def run_archivist(question: str) -> dict:
         hit_hop_cap = True
 
     synthesis_question = question + UNCERTAINTY_NOTE if hit_hop_cap else question
-    result = synthesizer.write_answer(synthesis_question, chunks_so_far, contradictions)
+    result = synthesizer.write_answer(
+        synthesis_question, _chunks_for_synthesis(chunks_so_far), contradictions
+    )
 
     return {
         "answer": result["answer"],

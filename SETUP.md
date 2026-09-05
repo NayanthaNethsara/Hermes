@@ -357,6 +357,8 @@ worst case. Mitigations, in order of how much they help:
 | Symptom | Cause / fix |
 |---|---|
 | `VOYAGE_API_KEY is not set` | `.env` missing or not at the repo root. It must sit beside `requirements.txt`. |
+| Backend behaves differently from the same call in a script; a key/model change seems to have no effect | **A second `.env` somewhere under `src/`.** `load_dotenv()` searches upward from the calling file, so `src/backend/.env` beats the root one for backend code while scripts run from the root use the correct file. Find strays with `find . -name ".env" -not -path "*/node_modules/*"` — there should be exactly one. |
+| `RetryError[<Future at 0x... raised HTTPError>]` in the frontend | Old builds swallowed the real error. Errors now name the status and the provider's message. If you still see this, you're running a stale backend process — restart `uvicorn`. |
 | `OPENROUTER_API_KEY and OPENROUTER_MODEL must be set` | Both are required, not just the key. Set a `:free` model id. |
 | Embedding fails with HTTP 400 (fails in <1s) | Wrong/nonexistent embedding model — see Step 5, note 2. Check the model name is real at https://docs.voyageai.com/docs/embeddings. |
 | `data/chroma does not exist` | Run Step 5 first. |

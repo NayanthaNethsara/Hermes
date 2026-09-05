@@ -1,4 +1,4 @@
-import type { ArchivistResponse } from "@/constants/mock/mockResponses";
+import type { ArchivistResponse } from "@/types/archivist";
 import { ContradictionBanner } from "@/components/contradiction-banner";
 
 export function AnswerCard({

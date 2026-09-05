@@ -1,4 +1,4 @@
-import type { TrustTier } from "@/constants/mock/mockResponses";
+import type { TrustTier } from "@/types/archivist";
 import { Dot } from "@/components/icons";
 
 const TRUST_STYLES: Record<TrustTier, string> = {

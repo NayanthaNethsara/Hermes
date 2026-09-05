@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ArchivistResponse } from "@/constants/mock/mockResponses";
+import type { ArchivistResponse } from "@/types/archivist";
 import { AnswerCard } from "@/components/answer-card";
 import { ChatIcon, SearchIcon, SendIcon } from "@/components/icons";
 

@@ -35,7 +35,15 @@ Something like: "Let's see it actually do this, live, right now." Then switch to
 This is the required live segment. Do not cut this part.
 
 1. Open the app, show it's really running (empty chat, real UI)
-2. Type a real multi-hop question, live (e.g. "Which other equipment is affected if component Y fails?")
+2. Type a real multi-hop question, live — use one of the actual 1C
+   questions from the official `sample_questions.json` dev set (only 2 of
+   its 20 questions are tagged `1C`; the rest are for sub-tracks 1A/1B, not
+   this project), e.g. "State the precise year in the Age of Shadows that
+   marks the true founding of Gloamreach." or "In which year was the
+   'Gauntlet of Sorrowfell' actually forged?" — both are framed around a
+   contested fact, which is exactly what the trust/contradiction layer is
+   for. Confirm on a dry run first which one gets the more interesting
+   (correctly contradiction-flagged) answer and lead with that one.
 3. While it's thinking, narrate what's happening: "Right now the Planner agent is deciding what to search for..."
 4. Show the reasoning trace panel expand — point at each step as it appears
 5. Show the final answer with sources and trust badges

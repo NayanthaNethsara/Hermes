@@ -1,6 +1,7 @@
 # Technical Architecture — The Archivist
 
-**Sub-track:** 1C — Searching the Way a Human Does
+**Sub-track:** 1C — Searching the Way a Human Does (primary)
+**Also addresses:** 1B — Connecting Facts Across Thousands of Pages (secondary, via the knowledge graph)
 **This file belongs at:** `docs/architecture.md`
 
 ---
@@ -96,7 +97,7 @@ Max hops per question: **5** (hard limit, prevents infinite loops and runaway AP
 - Runs OCR on scanned pages (Tesseract)
 - Splits documents into chunks (by section/paragraph, ~300-500 words each)
 - Tags every chunk with metadata: `source_type` (novel / wiki / codex / ephemera), `trust_tier` (see section 5)
-- Generates embeddings for each chunk (Voyage AI `voyage-context-4`)
+- Generates embeddings for each chunk (Voyage AI `voyage-4-lite`)
 - Writes chunks + embeddings + metadata into Chroma
 
 ### 4.2 Graph Builder (offline, run once)
@@ -246,8 +247,8 @@ src/
 | Backend | Python + FastAPI | Free |
 | Vector DB | Chroma (embedded) | Free |
 | Knowledge graph | NetworkX (in-memory) | Free |
-| Embeddings | Voyage AI `voyage-context-4` | Free (200M token allowance) |
-| LLM (all 3 agents) | OpenRouter free models (Qwen / DeepSeek `:free`) | Free |
+| Embeddings | Voyage AI `voyage-4-lite` | Free (200M token allowance) |
+| LLM (all 3 agents) | OpenRouter free models (`:free`, currently `minimax/minimax-m2.7:free`) | Free |
 | OCR | Tesseract | Free |
 | Frontend | Next.js + Tailwind | Free |
 | Bot | python-telegram-bot | Free |

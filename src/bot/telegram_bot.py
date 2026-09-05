@@ -28,7 +28,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import requests  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 from telegram import Update  # noqa: E402
-from telegram.ext import Application, ContextTypes, MessageHandler, filters  # noqa: E402
+from telegram.ext import (  # noqa: E402
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 load_dotenv()
 
@@ -36,8 +42,12 @@ load_dotenv()
 # (src/backend/main.py) listens on locally.
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 MAX_SOURCES_SHOWN = 3
-# The agent loop can take a while (up to 5 search hops), so give it room.
-REQUEST_TIMEOUT_SECONDS = 90
+# The agent loop can take a while. A measured question at stock settings took
+# ~110s, which silently blew the previous 90s timeout and surfaced in Telegram
+# as "Something went wrong, try again" - the bot looked broken while the
+# backend was working fine and about to answer. Set well above the worst case
+# rather than near it; the backend's own per-call timeouts bound the total.
+REQUEST_TIMEOUT_SECONDS = int(os.environ.get("BOT_REQUEST_TIMEOUT_SECONDS", "300"))
 
 
 def require_telegram_token() -> str:
@@ -83,21 +93,60 @@ def format_reply(result: dict) -> str:
     return "\n".join(lines)
 
 
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Answer /start.
+
+    Telegram shows a Start button on first contact, which sends /start. The
+    bot previously filtered commands out entirely and replied to nothing,
+    so a new user's first interaction was silence - it looked broken.
+    """
+    if update.message is None:
+        return
+    await update.message.reply_text(
+        "I'm The Archivist. Ask me a question about the Ashen Era Archive and "
+        "I'll search it, weigh how much each source can be trusted, and tell "
+        "you when sources disagree.\n\n"
+        "Answers take up to a couple of minutes - I search several times "
+        "before replying.\n\n"
+        "Try: Which war was won by the organization that included Isolde "
+        "Mournvale as one of its members?"
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Treat any text message as a question for the archive."""
     message = update.message
     if message is None or not message.text:
         return
 
+    # A question takes 45s-2min. Without an immediate acknowledgement the
+    # chat sits silent and looks dead, so say something first and keep the
+    # "typing" indicator alive while the backend works.
+    await message.reply_text("Searching the archive, one moment...")
+    await message.chat.send_action("typing")
+
     try:
         # ask_backend() is blocking and can take a long time (the agent
-        # loop runs up to 5 search hops). Run it off the event loop so
+        # loop runs several search hops). Run it off the event loop so
         # the bot stays responsive to other users while it waits.
         result = await asyncio.to_thread(ask_backend, message.text)
         reply = format_reply(result)
+    except requests.exceptions.Timeout:
+        print(f"WARNING: backend timed out after {REQUEST_TIMEOUT_SECONDS}s")
+        reply = (
+            f"That took longer than {REQUEST_TIMEOUT_SECONDS}s and I gave up "
+            "waiting. The backend may still be working - try again, or lower "
+            "MAX_SEARCH_HOPS in .env to make answers faster."
+        )
+    except requests.exceptions.ConnectionError:
+        print(f"WARNING: could not reach the backend at {BACKEND_URL}")
+        reply = (
+            f"I can't reach the backend at {BACKEND_URL}. Make sure it's "
+            "running: uvicorn src.backend.main:app"
+        )
     except Exception as exc:  # noqa: BLE001 - a failed request must not crash the bot
         print(f"WARNING: backend request failed: {exc}")
-        reply = "Something went wrong, try again."
+        reply = f"Something went wrong: {exc}"
 
     await message.reply_text(reply)
 
@@ -111,6 +160,7 @@ def main() -> None:
     token = require_telegram_token()
 
     application = Application.builder().token(token).build()
+    application.add_handler(CommandHandler("start", handle_start))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )

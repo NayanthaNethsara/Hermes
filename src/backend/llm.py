@@ -42,8 +42,9 @@ load_dotenv(REPO_ROOT / ".env")
 
 DEFAULT_FALLBACK_MODELS = (
     "minimax/minimax-m3:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
+    "minimax/minimax-m2.7:free",
     "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
 )
 
 REQUEST_TIMEOUT_SECONDS = 60

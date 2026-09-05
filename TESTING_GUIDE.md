@@ -60,21 +60,29 @@ synthesizer call). That means:
   default settings. Plan test sessions around this — don't discover it
   mid-session the way this project did (see `docs/limitations.md` "Eval
   run blocked by OpenRouter's daily quota").
-- **Set the budget levers before you test anything.** At stock settings a
-  measured question cost **41 API calls and ~110 seconds** — that is
-  *fewer than two questions per key per day*, which is not enough to run a
-  demo, let alone test one. Put these in `.env`:
-  ```
-  MAX_SEARCH_HOPS=3
-  CONTRADICTION_MAX_PAIRS=3
-  ```
-  That's ~16 calls and ~45-60s per question (3 questions/day/key), with no
-  observed quality loss — the answer was already settled by hop 2 on every
-  question tested. Raise them back only for a final representative run.
-- **Expect 45-110 seconds per question, with no progress indicator.** The
-  UI shows a spinner the whole time (`/api/ask` doesn't stream). This is
-  documented, not a hang. If you're demoing live, ask the question and
-  narrate while it works.
+- **Choose a profile before you test anything.** Both were measured on the
+  same 1C question ("true founding of Gloamreach"), and the difference is a
+  genuine trade-off — speed costs you the thing that makes this a 1C entry.
+
+  | | Fast | Demo |
+  |---|---|---|
+  | `OPENROUTER_MODEL` | `minimax/minimax-m3:free` | `minimax/minimax-m2.7:free` |
+  | `MAX_SEARCH_HOPS` / `CONTRADICTION_MAX_PAIRS` | `3` / `3` | `5` / `5` |
+  | Time | ~13s | ~110s |
+  | API calls | 8 (~6 questions/day) | 41 (under 2/day) |
+  | Reasoning steps shown | 1 | 5 |
+  | Contradictions surfaced | 0 | 3 |
+
+  **Use Fast for iterating**, because 41 calls/question means a single key
+  can't survive a testing session. **Use Demo when recording the video**:
+  the fast profile answers correctly but shows a one-step trace and no
+  contradiction banner, which makes the system look like ordinary RAG and
+  hides the multi-hop reasoning and trust/contradiction handling the whole
+  submission is built around.
+- **Expect a spinner with no progress indicator.** `/api/ask` doesn't
+  stream, so the UI shows nothing until the answer lands. Documented, not a
+  hang. On the Demo profile that's ~2 minutes — ask the question, then talk
+  over it.
 - **Don't mix manual poking (curl, Postman, the frontend) with a real eval
   run on the same key on the same day.** A handful of manual test questions
   can eat the budget an eval run needs. If you have multiple team members'

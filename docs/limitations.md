@@ -182,6 +182,32 @@ present — is the real fix and hasn't been attempted, because prompt
 changes need re-testing across the question set and that costs the same
 scarce daily quota.
 
+## Speed and the 1C differentiator pull in opposite directions
+
+Worth stating plainly because it shapes how the system should be demoed.
+Measured on the same question ("the true founding of Gloamreach"):
+
+| | `minimax-m3`, 3 hops, 3 pairs | `minimax-m2.7`, 5 hops, 5 pairs |
+|---|---|---|
+| Time / API calls | ~13s / 8 | ~110s / 41 |
+| Reasoning steps | 1 | 5 |
+| Contradictions found | 0 | 3 |
+
+Both answers are factually correct and correctly cited. But the fast
+configuration answers from the highest-trust source and stops, so the
+reasoning trace collapses to a single step and no contradiction is
+surfaced — the behaviour becomes indistinguishable from ordinary
+single-shot RAG, which is precisely what sub-track 1C is not about.
+
+The cause isn't only the hop cap: the faster model is more willing to
+return `DONE` after one search, so the loop legitimately ends early. That
+means "fast" and "visibly reasoning across sources" cannot currently be
+had at once, and the right setting depends on whether the goal is
+iteration speed or demonstrating the differentiator. A better fix would
+be a Critic and Planner that stop when the evidence is genuinely
+sufficient and keep going when sources conflict — currently the Critic
+errs one way and the fast model errs the other.
+
 ## Answering a question is slow, and there's no progress indicator
 
 Even after the concurrency work, a question takes roughly 45-110s

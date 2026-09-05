@@ -320,7 +320,7 @@ worst case. Mitigations, in order of how much they help:
 | `data/chroma does not exist` | Run Step 5 first. |
 | `data/graph.gpickle does not exist` | Run Step 6 — or ignore it; the backend degrades to vector-only search with a warning. |
 | `TesseractNotFoundError` | Tesseract binary isn't installed or isn't on `PATH` (Step 0). |
-| HTTP 429 from OpenRouter/Voyage | Free-tier rate limit. The code retries with backoff (1/2/4/8s); if it persists you're out of daily quota — switch keys. |
+| HTTP 429 from OpenRouter/Voyage, still failing after retries | Free-tier rate limit tighter than the built-in pacing assumes. Raise `VOYAGE_REQUEST_INTERVAL_SECONDS` / `OPENROUTER_REQUEST_INTERVAL_SECONDS` in `.env` (default 3s / 2s between requests) and re-run — ingestion/graph-building resume cleanly since both are safely re-runnable. If it still persists, you're out of quota for the key — switch keys or wait. |
 | A request fails instantly with no retries at all | That's by design for a 4xx (client error, e.g. bad model/bad request) — it would fail identically every time, so it's not worth 15s of backoff. Only 429/5xx/network errors retry. |
 | Everything classified as `ephemera` | Folder names don't match the classification keywords — Step 5, note 1. |
 | Frontend shows "Could not reach the backend" | Backend isn't running, or `NEXT_PUBLIC_API_URL` in `src/frontend/.env.local` points somewhere else. |

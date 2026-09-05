@@ -26,6 +26,7 @@ import argparse
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,7 +54,19 @@ VOYAGE_API_URL = os.environ.get(
     "VOYAGE_API_URL", "https://api.voyageai.com/v1/embeddings"
 )
 VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-4-lite")
-EMBED_BATCH_SIZE = 32
+# An account with no payment method attached is capped at 3 RPM / 10K TPM
+# (confirmed by hitting that 429 directly - see docs/decisions.md). Adding a
+# payment method removes that cap - the free 200M-token allowance still
+# applies even with a card on file, per Voyage's own error message - and was
+# confirmed empirically afterward: 30 requests in ~23s, zero 429s
+# (~78 req/min). These defaults assume a payment method IS attached; if
+# you're still on the unverified tier, override in .env:
+#   VOYAGE_EMBED_BATCH_SIZE=10
+#   VOYAGE_REQUEST_INTERVAL_SECONDS=22
+EMBED_BATCH_SIZE = int(os.environ.get("VOYAGE_EMBED_BATCH_SIZE", "32"))
+VOYAGE_REQUEST_INTERVAL_SECONDS = float(
+    os.environ.get("VOYAGE_REQUEST_INTERVAL_SECONDS", "1.5")
+)
 
 MIN_CHUNK_WORDS = 300
 MAX_CHUNK_WORDS = 500
@@ -98,6 +111,7 @@ class Chunk:
 class IngestStats:
     documents_processed: int = 0
     chunks_created: int = 0
+    chunks_skipped_already_embedded: int = 0
     failed_files: list[str] = field(default_factory=list)
     unclassified_files: list[str] = field(default_factory=list)
     per_source_type: dict[str, int] = field(default_factory=dict)
@@ -162,14 +176,64 @@ def chunk_text(text: str) -> list[str]:
     return chunks
 
 
+OCR_TIMEOUT_SECONDS = int(os.environ.get("OCR_TIMEOUT_SECONDS", "60"))
+# DPI to render a PDF page at before OCR-ing it. Higher is more accurate but
+# slower; 200 is a reasonable middle ground for OCR (not print-quality).
+PDF_OCR_RENDER_DPI = int(os.environ.get("PDF_OCR_RENDER_DPI", "200"))
+
+
+def _ocr_image(image) -> str:
+    """OCR a PIL image with pytesseract.
+
+    `timeout` is required here: without it, a single oversized or corrupt
+    image can hang the tesseract subprocess indefinitely, and with it the
+    entire ingestion run - a hang tenacity's retry logic can't see or
+    recover from, since it isn't the kind of exception that gets raised
+    and retried. On timeout, pytesseract raises RuntimeError, which every
+    caller here treats as a normal parse failure via the per-file
+    try/except in run_ingestion.
+    """
+    import pytesseract
+
+    return pytesseract.image_to_string(image, timeout=OCR_TIMEOUT_SECONDS)
+
+
 def extract_pdf_pages(path: Path) -> list[tuple[int, str]]:
-    """Return a list of (page_number, text) for every non-empty PDF page."""
+    """Return a list of (page_number, text) for every non-empty PDF page.
+
+    Tries normal text extraction first (cheap, exact). A page with no
+    extractable text is assumed to be a scanned/image page - architecture.md
+    4.1 explicitly requires OCR support for "simulated scans" in the corpus
+    - so it's rendered to an image and OCR'd instead of being silently
+    dropped. This is why PyMuPDF is a dependency: pypdf can't rasterize a
+    page, only read whatever text layer it already has.
+    """
+    import pymupdf
+    from PIL import Image
+    import io
+
     reader = PdfReader(str(path))
-    pages = []
+    pages: list[tuple[int, str]] = []
+    ocr_needed: list[int] = []
+
     for i, page in enumerate(reader.pages, start=1):
         text = (page.extract_text() or "").strip()
         if text:
             pages.append((i, text))
+        else:
+            ocr_needed.append(i)
+
+    if ocr_needed:
+        rendered = pymupdf.open(str(path))
+        for page_num in ocr_needed:
+            pix = rendered[page_num - 1].get_pixmap(dpi=PDF_OCR_RENDER_DPI)
+            with Image.open(io.BytesIO(pix.tobytes("png"))) as image:
+                ocr_text = _ocr_image(image).strip()
+            if ocr_text:
+                pages.append((page_num, ocr_text))
+        rendered.close()
+        pages.sort(key=lambda p: p[0])
+
     return pages
 
 
@@ -184,19 +248,52 @@ def extract_plain_text(path: Path) -> str:
 
 def extract_image_text(path: Path) -> str:
     """OCR a scanned/image file with pytesseract."""
-    import pytesseract
     from PIL import Image
 
     with Image.open(path) as image:
-        return pytesseract.image_to_string(image)
+        return _ocr_image(image)
+
+
+def build_slug_map(corpus_root: Path) -> dict[Path, str]:
+    """Compute each file's doc_slug, disambiguating files that would
+    otherwise collide.
+
+    chunk_id is built from doc_slug, and the natural scheme (extension
+    stripped from the relative path) collides whenever the same document
+    is provided in more than one format - e.g. "petition.docx" and
+    "petition.pdf" both slugify to "petition". Without disambiguation,
+    whichever file processes first "wins" the chunk_ids, and the resume
+    logic (which checks "does this chunk_id already exist?") then makes
+    every later file with the same base slug look already-done and skips
+    it entirely - silently dropping its real content with no error and no
+    warning.
+
+    Only files that actually collide get the extension folded into their
+    slug; every other file keeps the plain scheme, so this doesn't change
+    (and doesn't invalidate/orphan) chunk_ids for the common case of
+    already-embedded data.
+    """
+    files = list(iter_corpus_files(corpus_root))
+    base_slugs: dict[str, list[Path]] = {}
+    for path in files:
+        base = slugify(str(path.relative_to(corpus_root).with_suffix("")))
+        base_slugs.setdefault(base, []).append(path)
+
+    slug_map: dict[Path, str] = {}
+    for base, paths in base_slugs.items():
+        if len(paths) == 1:
+            slug_map[paths[0]] = base
+        else:
+            for path in paths:
+                slug_map[path] = slugify(str(path.relative_to(corpus_root)))
+    return slug_map
 
 
 def build_chunks_for_document(
-    path: Path, corpus_root: Path, stats: IngestStats
+    path: Path, corpus_root: Path, doc_slug: str, stats: IngestStats
 ) -> list[Chunk]:
     """Extract, classify, and chunk a single document. May raise on parse failure."""
     suffix = path.suffix.lower()
-    doc_slug = slugify(str(path.relative_to(corpus_root).with_suffix("")))
     source_doc = path.name
 
     source_type = classify_source_type(path, corpus_root)
@@ -274,17 +371,39 @@ def require_voyage_api_key() -> str:
     return api_key
 
 
+_last_voyage_request_at = 0.0
+
+
+def _throttle_voyage() -> None:
+    """Sleep just long enough to keep at least VOYAGE_REQUEST_INTERVAL_SECONDS
+    between successive Voyage requests.
+
+    Backoff-on-failure alone isn't enough for an account with a very low
+    requests-per-minute ceiling: without this, ingestion fires the next
+    batch's request the instant the previous one succeeds, immediately
+    re-triggering the same 429 that backoff just cleared.
+    """
+    global _last_voyage_request_at
+    elapsed = time.monotonic() - _last_voyage_request_at
+    remaining = VOYAGE_REQUEST_INTERVAL_SECONDS - elapsed
+    if remaining > 0:
+        time.sleep(remaining)
+    _last_voyage_request_at = time.monotonic()
+
+
 @retry(
     retry=retry_if_exception(_is_retryable_api_error),
-    wait=wait_exponential(multiplier=1, min=1, max=8),
-    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    stop=stop_after_attempt(6),
 )
 def embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts with Voyage AI (VOYAGE_MODEL). Retries with
-    exponential backoff (1s, 2s, 4s, 8s) on transient errors (network,
-    timeout, 429, 5xx) since the free tier rate-limits - but not on a 4xx
-    client error like an invalid model name or bad request, which will
-    never succeed no matter how many times it's retried."""
+    exponential backoff (2s, 4s, 8s, 16s, 30s - ~60s total) on transient
+    errors (network, timeout, 429, 5xx) since the free tier rate-limits -
+    but not on a 4xx client error like an invalid model name or bad
+    request, which will never succeed no matter how many times it's
+    retried."""
+    _throttle_voyage()
     response = requests.post(
         VOYAGE_API_URL,
         headers={"Authorization": f"Bearer {require_voyage_api_key()}"},
@@ -296,13 +415,25 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
     return [item["embedding"] for item in data]
 
 
-def embed_chunks(chunks: list[Chunk]) -> list[list[float]]:
-    """Embed a list of chunks in batches to stay within API payload limits."""
-    embeddings: list[list[float]] = []
+def embed_and_upsert_chunks(collection, chunks: list[Chunk]) -> None:
+    """Embed chunks in batches, upserting each batch immediately after it's
+    embedded - not once at the end for the whole document.
+
+    This matters a lot under a strict rate limit: a large document (a few
+    hundred pages can mean a few hundred chunks, i.e. dozens of Voyage
+    requests spaced ~20s apart - several minutes) previously wasn't saved
+    to Chroma at all until every one of its batches succeeded. If the
+    process was interrupted partway through, all of that document's
+    already-embedded batches were silently discarded, and the resume logic
+    above had nothing to skip - the whole document had to be re-embedded
+    from scratch. Upserting per-batch means each Voyage call's result is
+    durable the moment it succeeds, and progress is visible incrementally
+    instead of appearing frozen until a large document finishes.
+    """
     for start in range(0, len(chunks), EMBED_BATCH_SIZE):
         batch = chunks[start : start + EMBED_BATCH_SIZE]
-        embeddings.extend(embed_batch([c.text for c in batch]))
-    return embeddings
+        embeddings = embed_batch([c.text for c in batch])
+        upsert_chunks(collection, batch, embeddings)
 
 
 def iter_corpus_files(corpus_root: Path):
@@ -310,6 +441,17 @@ def iter_corpus_files(corpus_root: Path):
     for path in sorted(corpus_root.rglob("*")):
         if path.is_file() and path.suffix.lower() in supported:
             yield path
+
+
+def _existing_chunk_ids(collection, chunk_ids: list[str]) -> set[str]:
+    """Which of these chunk_ids are already in the collection.
+
+    A local Chroma lookup, not a Voyage call - free to check even under a
+    tight rate limit.
+    """
+    if not chunk_ids:
+        return set()
+    return set(collection.get(ids=chunk_ids, include=[])["ids"])
 
 
 def upsert_chunks(collection, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
@@ -334,6 +476,11 @@ def print_summary(stats: IngestStats) -> None:
     print("\n--- Ingestion summary ---")
     print(f"Documents processed: {stats.documents_processed}")
     print(f"Chunks created:      {stats.chunks_created}")
+    if stats.chunks_skipped_already_embedded:
+        print(
+            f"Chunks skipped (already embedded by a previous run): "
+            f"{stats.chunks_skipped_already_embedded}"
+        )
     print("Chunks per source_type:")
     for source_type, count in sorted(stats.per_source_type.items()):
         print(f"  {source_type:10s} {count}")
@@ -353,10 +500,11 @@ def run_ingestion(corpus_path: Path) -> IngestStats:
     collection = client.get_or_create_collection(COLLECTION_NAME)
 
     stats = IngestStats()
+    slug_map = build_slug_map(corpus_path)
 
     for path in iter_corpus_files(corpus_path):
         try:
-            chunks = build_chunks_for_document(path, corpus_path, stats)
+            chunks = build_chunks_for_document(path, corpus_path, slug_map[path], stats)
         except Exception as exc:  # noqa: BLE001 - one bad file must not stop the run
             print(f"WARNING: failed to parse {path}: {exc}")
             stats.failed_files.append(str(path))
@@ -365,8 +513,20 @@ def run_ingestion(corpus_path: Path) -> IngestStats:
         if not chunks:
             continue
 
-        embeddings = embed_chunks(chunks)
-        upsert_chunks(collection, chunks, embeddings)
+        # Resume support: skip chunks a previous (possibly interrupted) run
+        # already embedded. chunk_id is deterministic from the file path and
+        # chunk index, so this is a cheap local Chroma lookup, not a Voyage
+        # call - it doesn't touch the rate-limited request budget. Without
+        # this, re-running after an interruption re-embeds everything from
+        # scratch, which on a strict free tier can cost most of an hour
+        # just to get back to where the previous run already was.
+        already_done = _existing_chunk_ids(collection, [c.chunk_id for c in chunks])
+        new_chunks = [c for c in chunks if c.chunk_id not in already_done]
+
+        if new_chunks:
+            embed_and_upsert_chunks(collection, new_chunks)
+        if already_done:
+            stats.chunks_skipped_already_embedded += len(already_done)
 
         stats.documents_processed += 1
         stats.chunks_created += len(chunks)

@@ -145,3 +145,61 @@ the Telegram bot, which now hands its blocking backend call to
 survive the OpenRouter free tier. `MAX_SEARCH_HOPS` is *clamped* to 5 in code —
 it can be turned down but never up, because the 5-hop cap is a hard project
 rule and shouldn't be defeatable by an env var.
+
+## Real corpus ingestion findings (first full run, 2026-09-05)
+
+Running ingestion against the actual Ashen Era Archive corpus (341 files)
+surfaced three real issues no synthetic test data had exposed:
+
+**Voyage's real free-tier rate limit.** Confirmed directly from their own
+429 response body: an account with no payment method attached is capped at
+**3 requests/minute, 10K tokens/minute** — not documented anywhere public,
+only visible by hitting it. `ingest.py` now self-throttles to respect this
+by default (`VOYAGE_EMBED_BATCH_SIZE=10`, 22s between requests), and also
+retries only on 429/5xx/network errors, never on a 4xx (see "Retries only
+happen on transient errors" above) — a 400 from the wrong model name was
+wasting the full backoff window before this. After adding a payment method,
+the cap lifted entirely (confirmed empirically: 30 requests in ~23s, zero
+429s, ~78 req/min) — the code defaults were then raised accordingly
+(`VOYAGE_EMBED_BATCH_SIZE=32`, 1.5s), with the conservative values kept
+available as a documented `.env` override for unverified accounts.
+
+**Chunk-id collisions across file formats.** The corpus provides many
+documents in more than one format at the same path/name (e.g.
+`petition.docx` + `petition.pdf` + `petition.txt`, sometimes all three).
+`chunk_id` was built from the file path with the extension stripped, so
+every format of the same document produced *identical* chunk_ids. Whichever
+file processed first "won"; the others were silently dropped with no error,
+no warning, nowhere in the summary — findable only by diffing the walked
+file list against what actually made it into Chroma. The resume feature
+(see above) made this worse: without it, a later file's upsert would at
+least *overwrite* the earlier one (losing one version, keeping one); with
+it, the later file's real content was never embedded at all because its
+(colliding) chunk_ids already "existed."
+
+Fixed with a pre-pass (`build_slug_map`) that only folds the extension into
+the slug for files whose base slug is shared by more than one file — the
+~90% of files with a unique name keep the plain scheme untouched, so
+already-embedded chunk_ids for the non-colliding majority stay valid and
+don't need re-embedding. 32 files across 15 collision groups needed
+disambiguating; all now embed distinctly. One accepted side effect: the
+"winning" file in each group gets re-embedded once more under its new id,
+leaving its old, now-orphaned chunk_id in Chroma as a harmless duplicate —
+not worth the added complexity of trying to preserve it.
+
+**`.pdf` files with no embedded text layer.** 17 files named `*.scan.pdf`
+(petitions, interrogation records, sermons, ballads, contracts, letters —
+the corpus's "ephemera" tier) are image-only PDFs. `pypdf.extract_text()`
+returns nothing for a page with no text layer — silently, not an error —
+so all 17 produced zero chunks. `architecture.md` 4.1 explicitly requires
+OCR support for "simulated scans," so this was a real gap, not a
+by-design limitation. Fixed by rendering any page with no extractable text
+to an image (PyMuPDF, chosen over `pdf2image` specifically because it
+needs no external system binary like poppler — same reasoning as avoiding
+a second Tesseract-style install step) and OCR-ing it the same way a
+standalone image file already was. New dependency: `pymupdf`.
+
+After both fixes: 6,372 chunks from 271 documents. The only files that still
+produce zero chunks are 54 `.png` illustration plates (creature art,
+character portraits, landscape paintings) — confirmed by direct OCR test to
+genuinely contain no text, which is correct, not a bug.

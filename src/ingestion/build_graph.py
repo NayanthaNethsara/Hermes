@@ -33,6 +33,7 @@ import json
 import os
 import pickle
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,6 +50,16 @@ GRAPH_PATH = REPO_ROOT / "data" / "graph.gpickle"
 COLLECTION_NAME = "archive_chunks"
 
 CHROMA_PAGE_SIZE = 200
+
+# Minimum gap enforced between successive OpenRouter requests (this script
+# calls the LLM once per chunk, back-to-back, which can trip a low
+# requests-per-minute limit the same way ingestion's embedding calls did -
+# see src/ingestion/ingest.py's identical VOYAGE_REQUEST_INTERVAL_SECONDS).
+# Raise via .env if you still see 429s, lower if it's slower than it needs
+# to be.
+OPENROUTER_REQUEST_INTERVAL_SECONDS = float(
+    os.environ.get("OPENROUTER_REQUEST_INTERVAL_SECONDS", "2")
+)
 
 EXTRACTION_SYSTEM_PROMPT = (
     "You are an information-extraction assistant. Read the passage and "
@@ -97,19 +108,36 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
     return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
 
 
+_last_openrouter_request_at = 0.0
+
+
+def _throttle_openrouter() -> None:
+    """Sleep just long enough to keep at least
+    OPENROUTER_REQUEST_INTERVAL_SECONDS between successive OpenRouter
+    requests - see ingest.py's _throttle_voyage() for why backoff alone
+    isn't enough against a low requests-per-minute ceiling."""
+    global _last_openrouter_request_at
+    elapsed = time.monotonic() - _last_openrouter_request_at
+    remaining = OPENROUTER_REQUEST_INTERVAL_SECONDS - elapsed
+    if remaining > 0:
+        time.sleep(remaining)
+    _last_openrouter_request_at = time.monotonic()
+
+
 @retry(
     retry=retry_if_exception(_is_retryable_api_error),
-    wait=wait_exponential(multiplier=1, min=1, max=8),
-    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    stop=stop_after_attempt(6),
 )
 def call_llm(chunk_text: str) -> str:
     """Ask the configured OpenRouter model to extract entities/relationships
-    from a chunk of text. Retries with exponential backoff (1s, 2s, 4s, 8s)
-    on transient errors since the free tier rate-limits - not on a 4xx
-    client error, which would never succeed no matter how many retries.
-    Returns the raw response content."""
+    from a chunk of text. Retries with exponential backoff (2s, 4s, 8s,
+    16s, 30s - ~60s total) on transient errors since the free tier
+    rate-limits - not on a 4xx client error, which would never succeed no
+    matter how many retries. Returns the raw response content."""
     api_key, base_url, model = require_openrouter_config()
 
+    _throttle_openrouter()
     response = requests.post(
         f"{base_url.rstrip('/')}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},

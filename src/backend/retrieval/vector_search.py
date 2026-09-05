@@ -61,13 +61,13 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
 
 @retry(
     retry=retry_if_exception(_is_retryable_api_error),
-    wait=wait_exponential(multiplier=1, min=1, max=8),
-    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    stop=stop_after_attempt(6),
 )
 def embed_query(query: str) -> list[float]:
     """Embed a single query string with Voyage AI (VOYAGE_MODEL).
 
-    Retries with exponential backoff (1s, 2s, 4s, 8s) since the free tier
+    Retries with exponential backoff (2s, 4s, 8s, 16s, 30s - ~60s total) since the free tier
     rate-limits.
     """
     response = requests.post(

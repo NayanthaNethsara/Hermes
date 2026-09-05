@@ -14,18 +14,26 @@ Full technical details: `docs/architecture.md`. Read that file before writing an
 
 ## Current phase
 
-We are in **Phase 2: full stack built, pending a real end-to-end run.**
+We are in **Phase 2: full stack built; corpus ingested; graph build and
+end-to-end answer quality still pending.**
 
 All ten build prompts in `docs/BUILD_PROMPTS.md` are implemented: ingestion,
 knowledge graph, retrieval, trust/contradiction layer, the three agents, the
-orchestrator loop, the FastAPI backend, the frontend (now wired to the real
-API — the mock data folder has been deleted), the Telegram bot, and the eval
+orchestrator loop, the FastAPI backend, the frontend (wired to the real API —
+the mock data folder has been deleted), the Telegram bot, and the eval
 harness.
 
+What's actually been proven with real data and real keys:
+- The full 341-file corpus has been ingested end to end with a real
+  `VOYAGE_API_KEY`: 6,372 chunks from 271 documents in `data/chroma/`.
+- A real query through `vector_search.search_chunks()` returns correct,
+  well-ranked, correctly-trust-tiered results.
+
 What has **not** happened yet:
-- No run against the real Ashen Era Archive corpus (only synthetic test files).
-- No run with real API keys — every component was verified with mocked
-  embedding/LLM calls plus live HTTP between the real frontend, backend, and bot.
+- `build_graph.py` has not been run against the real corpus — it's the
+  single most expensive step (one LLM call per chunk), budget for it.
+- No question has gone through the full orchestrator/agent loop against the
+  real corpus yet, so answer quality is still unverified.
 
 See `SETUP.md` for the exact steps to do that first real run, and
 `docs/limitations.md` for what's known to be shaky.

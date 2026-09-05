@@ -71,12 +71,12 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
 
 @retry(
     retry=retry_if_exception(_is_retryable_api_error),
-    wait=wait_exponential(multiplier=1, min=1, max=8),
-    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    stop=stop_after_attempt(6),
 )
 def _call_llm(question: str, chunks_so_far: list[dict]) -> str:
     """Ask the configured OpenRouter model whether the evidence is enough.
-    Retries with exponential backoff (1s, 2s, 4s, 8s) on transient errors
+    Retries with exponential backoff (2s, 4s, 8s, 16s, 30s - ~60s total) on transient errors
     since the free tier rate-limits - not on a 4xx client error, which
     would never succeed no matter how many retries. Returns the raw
     response content."""

@@ -8,17 +8,26 @@ Keep it current: add things the day you hit them.
 
 ---
 
-## Not yet run against the real corpus or real API keys
+## Update: full corpus ingestion completed successfully
 
-**The biggest caveat.** Every component has been verified, but with synthetic
-test documents and mocked embedding/LLM calls. What *has* been proven is the
-plumbing: real HTTP between the real frontend, the real FastAPI server, and the
-real Telegram bot handler; real Chroma reads/writes; real graph traversal; real
-pickle round-trips.
+Ingestion has now run end to end against the real 341-file corpus with a
+real `VOYAGE_API_KEY`. Final state: 6,372 chunks from 271 documents; the
+only files producing zero chunks are 54 confirmed-textless illustration
+PNGs (verified by direct OCR test, not assumed). A real query
+(`search_chunks("Who is Gareth Ironmere?")`) returns correct, well-ranked,
+correctly-trust-tiered results with accurate page numbers — the embedding
+pipeline genuinely works, not just "doesn't crash."
 
-What has **not** been proven: that Voyage and OpenRouter accept our request
-shapes with live keys, and that answer quality on the actual Ashen Era Archive
-is any good. Step 5 of `SETUP.md` is where reality will bite first.
+Three real bugs surfaced by this run and are fixed — see `docs/decisions.md`
+"Real corpus ingestion findings": Voyage's actual (undocumented) free-tier
+rate limit, a chunk-id collision across same-named files in different
+formats that was silently dropping content, and image-only `.scan.pdf`
+files that needed OCR `pypdf` alone can't provide.
+
+Still not proven: **graph building** (`build_graph.py`, not yet run against
+the real corpus — the single most expensive step, one LLM call per chunk
+against 6,372 chunks, so budget for it deliberately) and answer quality
+end-to-end through the orchestrator/agents on real questions.
 
 ## ~~The embedding model may be wrong~~ — confirmed and fixed
 
@@ -42,7 +51,31 @@ deterministic and can never succeed on retry) — wasting ~15s of backoff
 before failing. It now only retries on 429/5xx/network errors; a 4xx fails
 in under a second.
 
-## The free-tier request budget is the real constraint
+## ~~Free-tier rate limits~~ — hit immediately, mitigated
+
+**Update:** with the model fixed, the very next attempt hit HTTP 429 on the
+first embedding call and exhausted all 5 retries (~15s of backoff) without
+clearing it. Voyage doesn't publish a requests-per-minute number for accounts
+with no payment method attached, so there was no number to target — but
+whatever it is, it's low enough to trip on the first request of a fresh run.
+
+Three changes, in order of impact:
+1. `EMBED_BATCH_SIZE` raised from 32 to 128 texts per request (`voyage-4-lite`
+   allows up to 1,000/request) — fewer, larger requests means far less
+   pressure on a per-minute ceiling for the same amount of text.
+2. Ingestion and graph-building now enforce a minimum delay between
+   consecutive requests (`VOYAGE_REQUEST_INTERVAL_SECONDS`,
+   `OPENROUTER_REQUEST_INTERVAL_SECONDS`) *before* hitting the limit, not just
+   backoff after. Backoff alone doesn't help a tight bulk loop: the instant
+   one retry succeeds, the next batch's request fires immediately and can
+   retrigger the same 429.
+3. The retry schedule itself was extended (2s/4s/8s/16s/30s, ~60s total, up
+   from ~15s) as a safety net, since 5 short retries genuinely weren't enough.
+
+All three are `.env`-tunable (see `configuration-example/.env.example`) since
+the real limit for any given account is unknown.
+
+## The free-tier request budget is still the real constraint
 
 A worst-case question costs ~36 OpenRouter requests against a free tier of
 roughly 50/day. Graph building costs one call *per chunk*, which on a full

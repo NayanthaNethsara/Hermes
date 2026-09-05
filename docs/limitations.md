@@ -24,10 +24,14 @@ rate limit, a chunk-id collision across same-named files in different
 formats that was silently dropping content, and image-only `.scan.pdf`
 files that needed OCR `pypdf` alone can't provide.
 
-Still not proven: **graph building** (`build_graph.py`, not yet run against
-the real corpus — the single most expensive step, one LLM call per chunk
-against 6,372 chunks, so budget for it deliberately) and answer quality
-end-to-end through the orchestrator/agents on real questions.
+**Update:** graph building is also now complete against the full real corpus
+(6,371/6,372 chunks, 35,604 entities, 108,588 edges) — see `docs/decisions.md`
+"Graph build scope" and its resolution below. A real multi-hop graph query
+returns correct, trust-tagged, multi-source facts.
+
+Still not proven: **answer quality end-to-end through the orchestrator/agents
+on real questions**, blocked today by the OpenRouter free-tier daily cap —
+see "Eval run blocked by OpenRouter's daily quota" below.
 
 ## ~~The embedding model may be wrong~~ — confirmed and fixed
 
@@ -84,6 +88,36 @@ corpus is far beyond a single key's daily allowance.
 Practically this means: the graph build has to be spread across keys or days,
 and heavy testing needs `CONTRADICTION_MAX_PAIRS` / `MAX_SEARCH_HOPS` turned
 down. See `SETUP.md § API budget`.
+
+## Eval run blocked by OpenRouter's daily quota (2026-09-05)
+
+Tried to run `src/eval/run_eval.py` against the real 8-question
+`sample_questions.json` set through the full orchestrator with real API
+keys, for the first time. Two things came out of this:
+
+**Real bug found and fixed:** every LLM call site (`planner.py`, `critic.py`,
+`synthesizer.py`, `trust.py`) treated HTTP 404 as a permanent, non-retryable
+error. Live testing showed OpenRouter actually returns 404 — not 429 — for
+"this free-tier model is temporarily out of capacity", while a genuinely
+invalid/unknown model ID returns 400 instead (confirmed by direct API call).
+So 404 was being treated as fatal when it's really transient. Fixed: 404 is
+now retried alongside 429/5xx, since it's empirically distinguishable from a
+real config error.
+
+**Real constraint hit:** after that fix, every question in the 8-question
+eval set still failed — this time because the account's OpenRouter free-tier
+quota (50 requests/day, unverified/no card) was fully exhausted
+(`X-RateLimit-Remaining: 0`, confirmed via direct API response headers) by
+the same day's diagnostic testing (model discovery, retry-bug reproduction,
+several manual test calls) plus the agent loop's own per-question cost
+(~2-10+ OpenRouter calls per question across up to 5 hops of
+planner+critic, plus one synthesizer call). Quota resets at 00:00 UTC daily
+(confirmed from the `X-RateLimit-Reset` header). CLAUDE.md rule 3 says to
+rotate to a different team member's key rather than pay for more — that
+decision belongs to the team, not something to assume. Practical
+consequence: **a full 8-question eval run needs a fresh day's quota (or a
+different key) done in one sitting**, since exploratory testing on the same
+key eats directly into the same 50/day budget the eval needs.
 
 ## Reasoning steps don't stream
 

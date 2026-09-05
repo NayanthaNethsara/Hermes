@@ -61,11 +61,17 @@ def _format_chunks_so_far(chunks_so_far: list[dict]) -> str:
 
 def _is_retryable_api_error(exc: BaseException) -> bool:
     """True for transient errors worth retrying (network hiccup, timeout,
-    429 rate-limit, 5xx) - False for a 4xx client error (bad model name,
-    malformed request, bad auth), which is deterministic and will fail
-    identically on every retry."""
+    429 rate-limit, 5xx, or a 404 from OpenRouter) - False for other 4xx
+    client errors (malformed request, bad auth), which are deterministic
+    and will fail identically on every retry.
+
+    404 is retried here because OpenRouter's free-tier models return it
+    for "this model is temporarily unavailable for free" - a transient
+    provider-capacity issue, not a permanent one. A genuinely bad/unknown
+    model ID gets a 400 from OpenRouter instead (confirmed empirically),
+    so this doesn't mask real config typos."""
     if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
-        return exc.response.status_code == 429 or exc.response.status_code >= 500
+        return exc.response.status_code in (404, 429) or exc.response.status_code >= 500
     return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
 
 

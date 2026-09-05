@@ -247,3 +247,37 @@ enhancement (see "Graph search is optional, vector search is not," above),
 so partial graph coverage degrades gracefully rather than breaking
 anything — multi-hop answers just won't find relationships for entities
 outside the sampled subset.
+
+**Update:** the graph has since been built across the full corpus in a
+one-time offline pass — 35,604 entities, 108,588 edges, 6,371/6,372 chunks.
+`--max-chunks` therefore isn't needed for the current `data/graph.gpickle`,
+but stays in the CLI as the documented way to rebuild a smaller graph on a
+constrained request budget. The live agents (Planner/Critic/Synthesizer)
+and ingestion run on OpenRouter + Voyage throughout, per CLAUDE.md rule 3.
+
+## OpenRouter 404 is sometimes transient, not permanent — retry logic was wrong
+
+Live-tested the full agent loop against OpenRouter for the first time
+(previously every orchestrator/agent test mocked the LLM call). The exact
+same model (`minimax/minimax-m2.7:free`) that returned HTTP 200 ten times in
+a row in isolated manual tests returned HTTP 404 consistently when called
+through the real orchestrator loop minutes later, with the body `"This
+model is unavailable for free."` — the same message text as the already-dead
+`qwen/qwen3-235b-a22b:free` model documented above, but this time for a
+model confirmed live and working moments before and after.
+
+Checked what a genuinely nonexistent/invalid model ID returns for
+comparison: HTTP 400 (`"... is not a valid model ID"`), not 404. That's the
+key distinction — 404 on OpenRouter's free tier means "this specific model
+has no free capacity available right now" (a transient, provider-side
+capacity issue that clears up on retry), while 400 means "this model
+doesn't exist" (a real, permanent config error). The existing
+`_is_retryable_api_error` predicate (see "Retries only happen on transient
+errors," above) treated both as equally permanent and never retried either
+— reasonable for 400, wrong for 404.
+
+Fixed by adding 404 to the retryable set (429, 5xx, 404) in all four
+OpenRouter call sites (`planner.py`, `critic.py`, `synthesizer.py`,
+`trust.py`) — but deliberately *not* in `vector_search.py`, where a 404
+against the Voyage embeddings endpoint would mean a genuine URL/config bug,
+not model-capacity flakiness, since Voyage doesn't exhibit this pattern.

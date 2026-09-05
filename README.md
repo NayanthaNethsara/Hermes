@@ -38,7 +38,9 @@ session — the OpenRouter free tier is the tightest constraint in the project.
 | File | What's in it |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | System design, request flow, data model, and the frozen API contract (section 6) |
+| [docs/diagrams/architecture.md](docs/diagrams/architecture.md) | The same two diagrams as standalone files |
 | [SETUP.md](SETUP.md) | Getting it running, plus troubleshooting |
+| [TESTING_GUIDE.md](TESTING_GUIDE.md) | How to verify answer quality is good enough to submit, without more coding |
 | [docs/decisions.md](docs/decisions.md) | Choices made along the way and why |
 | [docs/limitations.md](docs/limitations.md) | What's known to be weak or untested |
 | [docs/BUILD_PROMPTS.md](docs/BUILD_PROMPTS.md) | The build prompts each component was written from |

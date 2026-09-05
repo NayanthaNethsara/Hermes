@@ -181,15 +181,36 @@ Reads every chunk back out of Chroma and asks the LLM to extract
 `data/graph.gpickle`. Chunks whose response can't be parsed are skipped
 with a warning rather than killing the run.
 
-> **This costs one LLM call per chunk.** On a large corpus that will blow
-> straight through the OpenRouter free tier. Start with a small corpus
-> subset, or expect to run it across multiple days / team members' keys.
-> This is the single most expensive step in the project.
+> **This costs one LLM call per chunk.** Against the real 6,372-chunk
+> corpus and OpenRouter's confirmed 50-requests/day free tier, the full
+> corpus would take **~127 days** on OpenRouter alone — confirmed by
+> running it for real, not estimated. Three ways to actually get this
+> done, in order of what this project used:
+>
+> 1. **`--max-chunks N`** caps the run to the N highest-trust-tier chunks
+>    first (`TRUST_TIER_PRIORITY`: high → medium → medium-low → low), so a
+>    small OpenRouter-budget run still covers the most reliable content
+>    first. Good for a demo-sized subset on the free tier.
+> 2. **`--resume`** picks a long build back up after an interruption,
+>    skipping chunks already in `data/graph.gpickle` — safe to Ctrl+C and
+>    restart. Combine with `--workers N` for concurrency, but only raise it
+>    against a backend you've confirmed won't rate-limit you at that
+>    concurrency — on OpenRouter's free tier, leave it at 1.
+> 3. **Spread the build across days or team members' keys** — the free tier
+>    resets daily at 00:00 UTC, and `--resume` makes a multi-session build
+>    safe.
+>
+> Whichever path you use, this remains the single most expensive step in
+> the project — budget for it deliberately.
 
-Safe to re-run — it always rebuilds fresh, never appends duplicates.
+Safe to re-run without `--resume` — it always rebuilds fresh, never
+appends duplicates.
 
 **Check:** the summary reports non-zero nodes and edges, and
-`data/graph.gpickle` exists.
+`data/graph.gpickle` exists. (The graph currently committed to this
+project's `data/` folder — gitignored, so it travels with the team's local
+setup, not with `git clone` — has 35,604 entities and 108,588 edges across
+6,371/6,372 chunks.)
 
 > Graph search is treated as an *optional* enhancement: if this file is
 > missing, the backend logs a warning and answers using vector search alone.
@@ -270,8 +291,14 @@ python -m src.eval.run_eval --questions-path sample_questions.json
 Writes `results/eval_log.json` and prints totals, average reasoning steps,
 average response time, and how many questions surfaced a contradiction.
 
-`sample_questions.json` at the repo root is a generic starter — **replace
-those with real questions about the actual corpus** once you've seen it.
+`sample_questions.json` at the repo root is the **official 20-question dev
+set that ships with the corpus** (`Ashen_Era_Archive/sample_questions.json`
+— copied here verbatim). It spans all three sub-tracks (11 questions tagged
+`1A`, 7 tagged `1B`, only **2 tagged `1C`** — our track). The final judging
+set is different and unpublished, "of the same style" per the challenge
+doc. See `TESTING_GUIDE.md` for how to test meaningfully against this —
+running all 20 wastes OpenRouter budget on 18 questions from sub-tracks
+this project doesn't attempt.
 
 > Re-run this after any meaningful backend change (prompt edit, model swap,
 > retrieval tweak) so you can tell whether things improved or regressed.
@@ -310,10 +337,18 @@ worst case. Mitigations, in order of how much they help:
    similar questions back to back costs less than the worst case suggests.
    Restarting the backend clears that cache.
 4. **A 4xx error (bad model, bad key format, bad request) fails in under a
-   second**, not after 5 retries — only 429/5xx/network errors are retried
-   with backoff. So a misconfiguration won't itself burn your budget while
-   you find it.
+   second**, not after 5 retries — only 404/429/5xx/network errors are
+   retried with backoff (404 included because OpenRouter's free-tier models
+   return it for "temporarily out of capacity", which is transient, not a
+   real config error — confirmed empirically; see `docs/decisions.md`). So a
+   real misconfiguration (400) won't itself burn your budget while you find
+   it, but a 404 will retry for up to ~60s before giving up.
 5. **Don't rebuild the graph casually** — Step 6 is one call per chunk.
+6. **Don't mix exploratory/manual testing with a real eval run on the same
+   key on the same day.** The 50/day cap is shared across everything that
+   key does — a handful of manual `curl`/Postman test questions can eat
+   most of the budget an 8-question eval run needs. Do exploratory poking
+   and the "real" eval run on different days (or different keys) if you can.
 
 ---
 

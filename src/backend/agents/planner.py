@@ -96,10 +96,32 @@ def plan_next_search(question: str, chunks_so_far: list[dict]) -> str:
     """
     require_openrouter_config()
 
-    raw = _call_llm(question, chunks_so_far).strip().strip('"').strip("'")
-    if raw.strip().upper() == DONE:
+    raw = _call_llm(question, chunks_so_far)
+    return _clean_query(raw)
+
+
+def _clean_query(raw: str) -> str:
+    """Reduce a model reply to a usable search query, or DONE.
+
+    Small models don't always honour "respond with ONLY the query" - they
+    add a preamble line, wrap it in quotes, or write "DONE." with a full
+    stop. Take the last non-empty line (the query usually comes after any
+    preamble) and strip the decoration.
+    """
+    lines = [line.strip() for line in raw.strip().splitlines() if line.strip()]
+    if not lines:
         return DONE
-    return raw
+
+    candidate = lines[-1].strip().strip('"').strip("'").strip()
+
+    # "DONE", "DONE.", "done!" etc. all mean stop searching.
+    if candidate.rstrip(".!").strip().upper() == DONE:
+        return DONE
+    # Also catch a preamble like: I think we have enough. DONE
+    if any(line.rstrip(".!").strip().upper() == DONE for line in lines):
+        return DONE
+
+    return candidate
 
 
 if __name__ == "__main__":

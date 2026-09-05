@@ -237,6 +237,11 @@ def print_summary(graph: nx.MultiDiGraph, stats: GraphBuildStats) -> None:
 
 
 def main() -> None:
+    # Chunk text echoed in warnings can contain non-ASCII characters; on a
+    # Windows console (cp1252) printing those raises UnicodeEncodeError
+    # and would kill a long graph build. Degrade to "?" instead.
+    sys.stdout.reconfigure(errors="replace")
+
     try:
         require_openrouter_config()
         chunks = fetch_all_chunks()

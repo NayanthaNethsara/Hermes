@@ -125,6 +125,11 @@ def print_summary(results: list[dict]) -> None:
 
 
 def main() -> None:
+    # Questions/answers can contain non-ASCII characters; on a Windows
+    # console (cp1252) printing those raises UnicodeEncodeError. Degrade
+    # to "?" instead of crashing the eval run.
+    sys.stdout.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--questions-path",

@@ -14,11 +14,21 @@ Full technical details: `docs/architecture.md`. Read that file before writing an
 
 ## Current phase
 
-We are in **Phase 1: frontend only, with mock data.** No real backend exists yet. If you're helping with frontend work right now:
-- Use the exact mock JSON shape defined in `docs/architecture.md` section 6 — do not invent a different response shape, the real backend will match this shape exactly later.
-- Do not attempt to call a real API. There isn't one yet.
+We are in **Phase 2: full stack built, pending a real end-to-end run.**
 
-**Phase 2** (starts once the team splits up): all 4 members build backend components in parallel (ingestion, agents, graph, bot, eval). The person building frontend also joins backend work at this point.
+All ten build prompts in `docs/BUILD_PROMPTS.md` are implemented: ingestion,
+knowledge graph, retrieval, trust/contradiction layer, the three agents, the
+orchestrator loop, the FastAPI backend, the frontend (now wired to the real
+API — the mock data folder has been deleted), the Telegram bot, and the eval
+harness.
+
+What has **not** happened yet:
+- No run against the real Ashen Era Archive corpus (only synthetic test files).
+- No run with real API keys — every component was verified with mocked
+  embedding/LLM calls plus live HTTP between the real frontend, backend, and bot.
+
+See `SETUP.md` for the exact steps to do that first real run, and
+`docs/limitations.md` for what's known to be shaky.
 
 ---
 
@@ -37,7 +47,7 @@ We are in **Phase 1: frontend only, with mock data.** No real backend exists yet
 ## Coding conventions
 
 - **Backend:** Python 3.11+, FastAPI, type hints where practical, one function = one responsibility (see `src/backend/agents/` — each agent is its own small file, not one giant orchestrator function).
-- **Frontend:** React + Vite + Tailwind. Keep components small. Mock data lives in one clearly-named file (e.g. `src/frontend/mockData.js`) so it's easy to delete later.
+- **Frontend:** Next.js (App Router) + React + Tailwind, in `src/frontend/`. Keep components small, one per file. (Earlier drafts of this file said Vite — the project uses Next.js, per `docs/architecture.md` 4.7 and Prompt 8.) Response types live in `src/frontend/types/archivist.ts` and must match the API contract in `docs/architecture.md` section 6.
 - **No heavy agent frameworks** (no CrewAI, no AutoGen, no LangGraph) unless someone on the team already knows one well. Plain Python functions and a loop are enough for 3 agents and easier to explain live to judges.
 - Add a short docstring to every function that isn't obvious from its name — judges and teammates should be able to read the code without asking you.
 

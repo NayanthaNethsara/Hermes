@@ -31,7 +31,19 @@ TRUST_TIERS = {
     "ephemera": "low",
 }
 
-MAX_PAIRS_CHECKED = 5
+# Max *new* LLM comparisons per detect_contradictions() call. Already-compared
+# pairs come from the cache below and don't count against this budget.
+# Tunable via .env because this is the single biggest consumer of the
+# OpenRouter free-tier request budget (see SETUP.md "API budget").
+MAX_PAIRS_CHECKED = int(os.environ.get("CONTRADICTION_MAX_PAIRS", "5"))
+
+# Verdicts already obtained from the LLM, keyed by the pair of chunk_ids.
+# The orchestrator calls the critic once per search hop on a growing
+# chunk list, so without this the same pairs get re-sent to the LLM every
+# hop - which burns the free-tier request budget fast (architecture.md
+# section 9: ~50 requests/day). Process-lifetime only; the corpus is
+# fixed, so a verdict for a given pair never changes.
+_verdict_cache: dict[frozenset, dict | None] = {}
 
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "is",
@@ -76,15 +88,14 @@ def _keywords(text: str) -> set[str]:
     return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
 
 
-def _select_candidate_pairs(chunks: list[dict]) -> list[tuple[dict, dict]]:
-    """Pick the pairs most likely to be about the same topic or fact.
+def _rank_candidate_pairs(chunks: list[dict]) -> list[tuple[dict, dict]]:
+    """Rank the pairs most likely to be about the same topic or fact.
 
     Scores every pair by simple keyword overlap (cheap, no API calls),
     drops pairs from the same source_doc (a "contradiction" needs two
-    different sources) and pairs with zero overlap (clearly unrelated),
-    and keeps only the top MAX_PAIRS_CHECKED - this is what keeps an LLM
-    call from being made for every possible pair when there are many
-    chunks.
+    different sources) and pairs with zero overlap (clearly unrelated).
+    Returns them best-first; the caller decides how many to actually
+    spend an LLM call on.
     """
     scored = []
     for chunk_a, chunk_b in combinations(chunks, 2):
@@ -95,7 +106,11 @@ def _select_candidate_pairs(chunks: list[dict]) -> list[tuple[dict, dict]]:
             scored.append((overlap, chunk_a, chunk_b))
 
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [(a, b) for _, a, b in scored[:MAX_PAIRS_CHECKED]]
+    return [(a, b) for _, a, b in scored]
+
+
+def _pair_key(chunk_a: dict, chunk_b: dict) -> frozenset:
+    return frozenset((chunk_a["chunk_id"], chunk_b["chunk_id"]))
 
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(5))
@@ -165,8 +180,10 @@ def detect_contradictions(chunks: list[dict]) -> list[dict]:
     text, source_doc, page, source_type, trust_tier).
 
     Rather than comparing every pair (expensive as chunk count grows),
-    this first ranks pairs by simple keyword overlap and only sends the
-    top MAX_PAIRS_CHECKED most-related pairs to the LLM.
+    this ranks pairs by simple keyword overlap and spends at most
+    MAX_PAIRS_CHECKED *new* LLM calls per invocation. Pairs already
+    compared earlier in this process are served from _verdict_cache, so
+    they still surface here without costing another request.
 
     Returns a list shaped like:
         [{"topic": "...", "sources_disagree": ["source_doc_1", "source_doc_2"]}]
@@ -183,25 +200,37 @@ def detect_contradictions(chunks: list[dict]) -> list[dict]:
     require_openrouter_config()
 
     contradictions = []
-    for chunk_a, chunk_b in _select_candidate_pairs(chunks):
-        try:
-            raw_content = _call_llm(chunk_a, chunk_b)
-            result = _parse_conflict_response(raw_content)
-        except Exception as exc:  # noqa: BLE001 - one bad pair must not stop the check
-            print(
-                f"WARNING: skipping contradiction check for "
-                f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}: {exc}"
-            )
-            continue
+    new_calls_made = 0
 
-        if result is None:
-            print(
-                f"WARNING: could not parse contradiction-check response for "
-                f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}"
-            )
-            continue
+    for chunk_a, chunk_b in _rank_candidate_pairs(chunks):
+        key = _pair_key(chunk_a, chunk_b)
 
-        if result.get("conflict"):
+        if key in _verdict_cache:
+            result = _verdict_cache[key]
+        else:
+            if new_calls_made >= MAX_PAIRS_CHECKED:
+                # Budget for this call spent; remaining pairs stay
+                # uncompared for now (a later hop can pick them up).
+                break
+            try:
+                raw_content = _call_llm(chunk_a, chunk_b)
+                result = _parse_conflict_response(raw_content)
+            except Exception as exc:  # noqa: BLE001 - one bad pair must not stop the check
+                print(
+                    f"WARNING: skipping contradiction check for "
+                    f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}: {exc}"
+                )
+                continue
+            new_calls_made += 1
+
+            if result is None:
+                print(
+                    f"WARNING: could not parse contradiction-check response for "
+                    f"{chunk_a['chunk_id']} / {chunk_b['chunk_id']}"
+                )
+            _verdict_cache[key] = result
+
+        if result and result.get("conflict"):
             contradictions.append(
                 {
                     "topic": result.get("topic") or "unspecified",

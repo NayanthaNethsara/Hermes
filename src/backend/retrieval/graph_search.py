@@ -20,14 +20,32 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GRAPH_PATH = REPO_ROOT / "data" / "graph.gpickle"
 
 
-def load_graph() -> nx.MultiDiGraph:
-    """Load the knowledge graph pickled by src/ingestion/build_graph.py."""
+# The graph is read-only at query time and can be large, so it's loaded
+# from disk once and reused for the life of the process (architecture.md
+# 4.2: "loaded once when the backend starts") rather than re-unpickled on
+# every search - the orchestrator calls search_graph up to 5 times per
+# question.
+_graph_cache: nx.MultiDiGraph | None = None
+
+
+def load_graph(force_reload: bool = False) -> nx.MultiDiGraph:
+    """Load the knowledge graph pickled by src/ingestion/build_graph.py.
+
+    Cached after the first load. Pass force_reload=True to pick up a
+    freshly rebuilt graph without restarting the process.
+    """
+    global _graph_cache
+
+    if _graph_cache is not None and not force_reload:
+        return _graph_cache
+
     if not GRAPH_PATH.exists():
         raise RuntimeError(
             f"{GRAPH_PATH} does not exist - run src/ingestion/build_graph.py first"
         )
     with open(GRAPH_PATH, "rb") as f:
-        return pickle.load(f)
+        _graph_cache = pickle.load(f)
+    return _graph_cache
 
 
 def find_matching_nodes(graph: nx.MultiDiGraph, entity: str) -> list[str]:

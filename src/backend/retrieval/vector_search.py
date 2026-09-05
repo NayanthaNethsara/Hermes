@@ -23,8 +23,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 COLLECTION_NAME = "archive_chunks"
 
-VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings"
-VOYAGE_MODEL = "voyage-context-4"
+# Overridable via .env - but this MUST stay the same model that
+# src/ingestion/ingest.py used, or query embeddings land in a different
+# vector space than the stored chunks and results become meaningless.
+# If you change VOYAGE_MODEL, re-run ingestion.
+VOYAGE_API_URL = os.environ.get(
+    "VOYAGE_API_URL", "https://api.voyageai.com/v1/embeddings"
+)
+VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-context-4")
 
 
 def require_voyage_api_key() -> str:

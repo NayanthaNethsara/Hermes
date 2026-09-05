@@ -16,18 +16,26 @@ How to run it:
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+load_dotenv()
 
 from src.backend.agents import critic, planner, synthesizer  # noqa: E402
 from src.backend.retrieval import graph_search, vector_search  # noqa: E402
 
 # Hard cap on search hops - protects API budget and demo reliability
 # (CLAUDE.md rule 6). Enforced with a plain loop counter, never unbounded.
-MAX_HOPS = 5
+# Lowerable via .env to save free-tier requests, but never raisable above
+# 5: the rule is a hard ceiling, so the env value is clamped, not trusted.
+HARD_MAX_HOPS = 5
+MAX_HOPS = min(int(os.environ.get("MAX_SEARCH_HOPS", HARD_MAX_HOPS)), HARD_MAX_HOPS)
 
 UNCERTAINTY_NOTE = (
     "\n\n(Note: the search was stopped after the maximum number of hops "
@@ -35,6 +43,17 @@ UNCERTAINTY_NOTE = (
     "in your answer about this uncertainty, rather than presenting the "
     "evidence gathered so far as a complete picture.)"
 )
+
+
+# Capitalized words that start a sentence/question but aren't entities.
+# Without this filter, "Who repaired the Ember Clock" yields "Who", and
+# graph_search's case-insensitive substring match would happily match it
+# against unrelated nodes like "Whorl Keeper".
+_NON_ENTITY_WORDS = {
+    "who", "what", "when", "where", "why", "how", "which", "whose", "whom",
+    "did", "does", "do", "is", "are", "was", "were", "the", "a", "an",
+    "list", "find", "search", "tell", "explain", "describe", "give",
+}
 
 
 def _extract_entity_candidates(text: str) -> list[str]:
@@ -47,9 +66,17 @@ def _extract_entity_candidates(text: str) -> list[str]:
     seen: set[str] = set()
     entities: list[str] = []
     for match in re.findall(r"\b[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\b", text):
-        if match not in seen:
-            seen.add(match)
-            entities.append(match)
+        if match.lower() in _NON_ENTITY_WORDS:
+            continue
+        # Strip a leading question word from a longer phrase, e.g.
+        # "Which Ember Wardens" -> "Ember Wardens".
+        words = match.split()
+        while words and words[0].lower() in _NON_ENTITY_WORDS:
+            words = words[1:]
+        cleaned = " ".join(words)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            entities.append(cleaned)
     return entities
 
 
@@ -103,6 +130,7 @@ def run_archivist(question: str) -> dict:
     seen_chunk_ids: set[str] = set()
     reasoning_steps: list[dict] = []
     contradictions: list[dict] = []
+    seen_contradictions: set[tuple] = set()
     hit_hop_cap = True
 
     for hop in range(1, MAX_HOPS + 1):
@@ -116,7 +144,19 @@ def run_archivist(question: str) -> dict:
         chunks_so_far.extend(new_chunks)
 
         critic_result = critic.evaluate_evidence(question, chunks_so_far)
-        contradictions = critic_result["contradictions"]
+
+        # Accumulate rather than overwrite: a contradiction surfaced on an
+        # earlier hop must not disappear just because a later hop's critic
+        # sampled a different set of pairs (CLAUDE.md rule 5 - never
+        # silently resolve a contradiction).
+        for contradiction in critic_result["contradictions"]:
+            key = (
+                contradiction["topic"],
+                tuple(sorted(contradiction["sources_disagree"])),
+            )
+            if key not in seen_contradictions:
+                seen_contradictions.add(key)
+                contradictions.append(contradiction)
 
         reasoning_steps.append(
             {

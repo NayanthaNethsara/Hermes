@@ -18,6 +18,7 @@ How to run it:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -89,7 +90,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     try:
-        result = ask_backend(message.text)
+        # ask_backend() is blocking and can take a long time (the agent
+        # loop runs up to 5 search hops). Run it off the event loop so
+        # the bot stays responsive to other users while it waits.
+        result = await asyncio.to_thread(ask_backend, message.text)
         reply = format_reply(result)
     except Exception as exc:  # noqa: BLE001 - a failed request must not crash the bot
         print(f"WARNING: backend request failed: {exc}")
@@ -99,6 +103,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def main() -> None:
+    # Answers/errors echoed to the console can contain non-ASCII text; on
+    # a Windows console (cp1252) printing those raises UnicodeEncodeError
+    # and would take the bot down. Degrade to "?" instead.
+    sys.stdout.reconfigure(errors="replace")
+
     token = require_telegram_token()
 
     application = Application.builder().token(token).build()

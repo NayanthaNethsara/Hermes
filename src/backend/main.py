@@ -42,8 +42,13 @@ class AskRequest(BaseModel):
 
 
 @app.post("/api/ask")
-async def ask(request: AskRequest) -> dict:
+def ask(request: AskRequest) -> dict:
     """Run the full agent loop for `question` and return the answer.
+
+    Deliberately a sync `def`, not `async def`: run_archivist() blocks for
+    many seconds (up to 5 search hops of LLM calls). A sync endpoint is
+    handed to FastAPI's threadpool, so one in-flight question can't freeze
+    the whole event loop - /api/health and a second question still work.
 
     A demo crash is worse than a graceful error, so any failure here
     (missing API key, upstream API error, etc.) is caught and returned

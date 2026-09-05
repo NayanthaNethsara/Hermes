@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,8 +42,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 COLLECTION_NAME = "archive_chunks"
 
-VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings"
-VOYAGE_MODEL = "voyage-context-4"
+# Overridable via .env so the model/endpoint can be swapped without a code
+# change if the free tier or model availability shifts. NOTE: Voyage's
+# contextualized-embedding models are served from a *different* endpoint
+# (/v1/contextualizedembeddings) with a different payload shape than the
+# standard /v1/embeddings used here - if embedding 400s on the configured
+# model, set VOYAGE_MODEL to a standard model (e.g. voyage-3.5-lite).
+VOYAGE_API_URL = os.environ.get(
+    "VOYAGE_API_URL", "https://api.voyageai.com/v1/embeddings"
+)
+VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-context-4")
 EMBED_BATCH_SIZE = 32
 
 MIN_CHUNK_WORDS = 300
@@ -351,6 +360,11 @@ def run_ingestion(corpus_path: Path) -> IngestStats:
 
 
 def main() -> None:
+    # Corpus filenames can contain non-ASCII characters; on a Windows
+    # console (cp1252) printing those raises UnicodeEncodeError and would
+    # kill the whole run. Degrade to "?" instead of crashing.
+    sys.stdout.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--corpus-path",

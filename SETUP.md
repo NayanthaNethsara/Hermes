@@ -41,11 +41,18 @@ All free. Nothing here needs a credit card.
 ### OPENROUTER_API_KEY (required — the three agents)
 1. Sign up at https://openrouter.ai/
 2. Create a key at https://openrouter.ai/keys
-3. **This is the tight one.** Without a card attached the free tier is roughly
-   **50 requests/day**, and one question can cost up to ~36. See
-   [API budget](#api-budget) below before you start testing.
-4. Pick a model whose id ends in `:free` (e.g. `qwen/qwen3-235b-a22b:free`).
-   Browse them at https://openrouter.ai/models?max_price=0
+3. **This is the tight one.** Without a card attached the free tier is
+   **exactly 50 requests/day** (confirmed from OpenRouter's own docs), and
+   one question can cost up to ~36. See [API budget](#api-budget) below
+   before you start testing.
+4. Pick a model whose id ends in `:free`. The default (`minimax/minimax-m2.7:free`)
+   was verified working with a real extraction call as of 2026-09-05 — but
+   free model availability changes; OpenRouter deprecates and adds `:free`
+   models without much notice (the model this project originally shipped
+   with, `qwen/qwen3-235b-a22b:free`, was removed from the free tier
+   entirely and now 404s). If yours 404s, check current models at
+   https://openrouter.ai/models?max_price=0 — a live list is more reliable
+   than any name hardcoded here.
 
 ### TELEGRAM_BOT_TOKEN (only if demoing the bot)
 1. Message **@BotFather** on Telegram, send `/newbot`, follow the prompts.

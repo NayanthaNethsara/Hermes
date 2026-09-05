@@ -29,10 +29,12 @@ so re-running never produces duplicate edges.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import pickle
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -192,9 +194,26 @@ def parse_relations(raw_content: str) -> list[dict] | None:
     return relations
 
 
-def fetch_all_chunks() -> list[dict]:
-    """Page through the archive_chunks collection and return every chunk
-    as {chunk_id, text, trust_tier}."""
+# Highest trust first. OpenRouter's free tier is 50 requests/day with no
+# purchase history (confirmed from their docs), one call per chunk - a
+# corpus of several thousand chunks doesn't fit in a demo timeline without
+# either paying or running across many days (see docs/decisions.md "graph
+# build scope"). When --max-chunks caps the run, this ordering means the
+# graph gets built from the most reliable, best-structured content first
+# (codex-tier text tends to be dense registry/record-style writing, which
+# extracts cleanly into entities and relationships) rather than an
+# arbitrary slice.
+TRUST_TIER_PRIORITY = {"high": 0, "medium": 1, "medium-low": 2, "low": 3}
+
+
+def fetch_all_chunks(max_chunks: int | None = None) -> list[dict]:
+    """Page through the archive_chunks collection and return chunks as
+    {chunk_id, text, trust_tier}.
+
+    If max_chunks is given and the collection has more than that, returns
+    the max_chunks highest-trust-tier chunks (see TRUST_TIER_PRIORITY)
+    rather than an arbitrary prefix.
+    """
     client = _chroma_client()
     collection = client.get_collection(COLLECTION_NAME)
 
@@ -212,6 +231,10 @@ def fetch_all_chunks() -> list[dict]:
                 {"chunk_id": chunk_id, "text": text, "trust_tier": metadata["trust_tier"]}
             )
         offset += len(ids)
+
+    if max_chunks is not None and len(chunks) > max_chunks:
+        chunks.sort(key=lambda c: TRUST_TIER_PRIORITY.get(c["trust_tier"], 99))
+        chunks = chunks[:max_chunks]
 
     return chunks
 
@@ -286,9 +309,21 @@ def main() -> None:
     # and would kill a long graph build. Degrade to "?" instead.
     sys.stdout.reconfigure(errors="replace")
 
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--max-chunks",
+        type=int,
+        default=None,
+        help="Cap the number of chunks sent to the LLM, highest-trust-tier "
+        "first (see TRUST_TIER_PRIORITY). Default: no cap, use every "
+        "chunk - only advisable with a paid OpenRouter balance; the free "
+        "tier is 50 requests/day.",
+    )
+    args = parser.parse_args()
+
     try:
         require_openrouter_config()
-        chunks = fetch_all_chunks()
+        chunks = fetch_all_chunks(max_chunks=args.max_chunks)
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from None
 

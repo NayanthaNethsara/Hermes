@@ -203,3 +203,47 @@ After both fixes: 6,372 chunks from 271 documents. The only files that still
 produce zero chunks are 54 `.png` illustration plates (creature art,
 character portraits, landscape paintings) — confirmed by direct OCR test to
 genuinely contain no text, which is correct, not a bug.
+
+## The project's default OpenRouter model was already dead
+
+`qwen/qwen3-235b-a22b:free` — this project's originally-specified model,
+present in every doc and `.env.example` — is no longer on OpenRouter's free
+tier. A real call returns HTTP 404 with `"This model is unavailable for
+free. The paid version is available now."` This had never been caught
+because every orchestrator/agent test up to this point mocked the LLM call;
+`build_graph.py` was the first script actually invoked against a real key.
+
+Free model availability on OpenRouter changes often and isn't something to
+hardcode confidence in. Queried `GET /api/v1/models` live rather than
+guessing a replacement, filtered to `:free`, and test-called four
+candidates with a real extraction prompt: two (`google/gemma-4-31b-it`,
+`z-ai/glm-5.2`) hit transient 429s from congested shared upstream pools
+(retryable, not a hard failure); two (`minimax/minimax-m2.7`,
+`nvidia/nemotron-3-super-120b-a12b`) returned clean, valid, well-formed
+JSON immediately. Picked `minimax/minimax-m2.7:free` — slightly tighter
+output, no markdown fence, no redundant self-referential relations (the
+nvidia model produced one: `"is a major Executioner" -> "Executioner"`).
+Updated everywhere the old model was referenced: `.env`, `.env.example`,
+`SETUP.md`.
+
+## Graph build scope: highest-trust subset, not the full corpus
+
+`build_graph.py` needs one LLM call per chunk. Against 6,372 real chunks and
+OpenRouter's confirmed 50-requests/day free-tier ceiling (no purchase
+history), the full corpus would take ~127 days. Raising the daily cap to
+1,000 requires an actual $10 purchase — real money, and a direct conflict
+with CLAUDE.md rule 3 ("only free-tier tools") — so that decision was left
+to the user rather than assumed.
+
+Chosen: build the graph from a capped, highest-trust-tier-first subset
+instead of the full corpus. Implemented as `build_graph.py --max-chunks N`,
+sorting available chunks by `TRUST_TIER_PRIORITY` (high → medium →
+medium-low → low) before truncating, so a capped run gets the most
+reliable, best-structured content (codex-tier text tends to be dense
+registry/record-style writing that extracts cleanly) rather than an
+arbitrary prefix. This is a legitimate reduction, not a hidden one: the
+orchestrator already treats a missing/incomplete graph as an optional
+enhancement (see "Graph search is optional, vector search is not," above),
+so partial graph coverage degrades gracefully rather than breaking
+anything — multi-hop answers just won't find relationships for entities
+outside the sampled subset.

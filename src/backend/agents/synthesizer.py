@@ -15,7 +15,7 @@ import os
 
 import requests
 from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -74,11 +74,27 @@ def _format_contradictions(contradictions: list[dict]) -> str:
     return "\n\nNoted contradictions:\n" + "\n".join(lines)
 
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(5))
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """True for transient errors worth retrying (network hiccup, timeout,
+    429 rate-limit, 5xx) - False for a 4xx client error (bad model name,
+    malformed request, bad auth), which is deterministic and will fail
+    identically on every retry."""
+    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable_api_error),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    stop=stop_after_attempt(5),
+)
 def _call_llm(question: str, chunks: list[dict], contradictions: list[dict]) -> str:
     """Ask the configured OpenRouter model to write the final answer.
-    Retries with exponential backoff (1s, 2s, 4s, 8s) since the free tier
-    rate-limits. Returns the raw response content (plain-text answer)."""
+    Retries with exponential backoff (1s, 2s, 4s, 8s) on transient errors
+    since the free tier rate-limits - not on a 4xx client error, which
+    would never succeed no matter how many retries. Returns the raw
+    response content (plain-text answer)."""
     api_key, base_url, model = require_openrouter_config()
 
     system_prompt = BASE_SYSTEM_PROMPT

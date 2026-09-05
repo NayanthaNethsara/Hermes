@@ -20,16 +20,27 @@ What has **not** been proven: that Voyage and OpenRouter accept our request
 shapes with live keys, and that answer quality on the actual Ashen Era Archive
 is any good. Step 5 of `SETUP.md` is where reality will bite first.
 
-## The embedding model may be wrong
+## ~~The embedding model may be wrong~~ — confirmed and fixed
 
-The configured default is `voyage-context-4`. Voyage's `*-context-*` models are
-contextualized-embedding models served from a **different endpoint**
-(`/v1/contextualizedembeddings`) with a different payload shape than the
-standard `/v1/embeddings` this code calls. If that model name is wrong or needs
-the other endpoint, ingestion fails immediately with an HTTP 400.
+**Update:** ran against the real corpus and hit this immediately, as
+predicted. `voyage-context-4` (this project's originally-specified model)
+**does not exist** — it's not a real Voyage model, hence the instant HTTP 400.
+Voyage's real contextualized-embedding model is `voyage-context-3`, and it
+lives on a genuinely different endpoint (`/v1/contextualizedembeddings`) with
+a different payload shape (nested lists of chunks per document) than the flat
+list this code sends to `/v1/embeddings`.
 
-Mitigated, not solved: `VOYAGE_MODEL` and `VOYAGE_API_URL` are env-overridable,
-so the fix is a `.env` edit rather than a code change.
+Fixed by defaulting `VOYAGE_MODEL` to `voyage-4-lite` — a real, current,
+free-tier model on the endpoint this code already correctly calls. No
+rewrite of the ingestion/retrieval payload shape needed. Still
+env-overridable via `VOYAGE_MODEL`/`VOYAGE_API_URL` if that model's
+availability changes. See `docs/decisions.md`.
+
+Also fixed as part of chasing this down: the retry decorator on every
+LLM/embedding call was retrying **any** exception, including a 400 (which is
+deterministic and can never succeed on retry) — wasting ~15s of backoff
+before failing. It now only retries on 429/5xx/network errors; a 4xx fails
+in under a second.
 
 ## The free-tier request budget is the real constraint
 

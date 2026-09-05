@@ -15,7 +15,7 @@ from pathlib import Path
 import chromadb
 import requests
 from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -30,7 +30,7 @@ COLLECTION_NAME = "archive_chunks"
 VOYAGE_API_URL = os.environ.get(
     "VOYAGE_API_URL", "https://api.voyageai.com/v1/embeddings"
 )
-VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-context-4")
+VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-4-lite")
 
 
 def require_voyage_api_key() -> str:
@@ -49,9 +49,23 @@ def require_voyage_api_key() -> str:
     return api_key
 
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(5))
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """True for transient errors worth retrying (network hiccup, timeout,
+    429 rate-limit, 5xx) - False for a 4xx client error (bad model name,
+    malformed request, bad auth), which is deterministic and will fail
+    identically on every retry."""
+    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable_api_error),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    stop=stop_after_attempt(5),
+)
 def embed_query(query: str) -> list[float]:
-    """Embed a single query string with Voyage AI (voyage-context-4).
+    """Embed a single query string with Voyage AI (VOYAGE_MODEL).
 
     Retries with exponential backoff (1s, 2s, 4s, 8s) since the free tier
     rate-limits.

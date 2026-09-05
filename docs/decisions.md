@@ -43,6 +43,47 @@ Config errors aren't transient, so they're now checked once at the top of each
 public function, before anything retryable runs. A missing key fails
 immediately with a message that names the fix.
 
+## Retries only happen on transient errors, not on 4xx
+
+The same class of problem showed up again once real API calls started
+failing for real: the retry decorator on every LLM/embedding call retried
+**any** exception, including an HTTP 400 (invalid model, malformed request,
+bad auth format) — a deterministic error that will fail identically no
+matter how many times it's retried. That meant every call to a
+misconfigured endpoint wasted the full ~15s of exponential backoff before
+finally surfacing the real error.
+
+Every retried call (`ingest.py`, `build_graph.py`, `trust.py`,
+`vector_search.py`, and all three agents) now uses a
+`retry_if_exception` predicate: retry on 429, 5xx, connection errors, and
+timeouts; fail immediately on anything else. A bad model name or malformed
+request now surfaces in under a second instead of ~15.
+
+## `voyage-context-4` doesn't exist — switched to a real model
+
+This project's original spec named `voyage-context-4` as the embedding
+model. It isn't real. Confirmed by checking Voyage's own docs: the current
+model line is `voyage-4` / `voyage-4-lite` / `voyage-4-large` (plus
+`voyage-code-4`, `voyage-context-3`, and the older `voyage-3.x` family).
+Nothing named `voyage-context-4` exists at any version. Using it 400s
+immediately.
+
+Voyage's actual contextualized-embedding model is `voyage-context-3`, but it
+is served from a genuinely different endpoint
+(`/v1/contextualizedembeddings`) with a different request shape — a list of
+lists (chunks grouped per document), not the flat list of texts
+`ingest.py`/`vector_search.py` send to `/v1/embeddings`. Adopting it would
+mean restructuring how chunks are batched for embedding in both files.
+
+Given the deadline, the fix was to default `VOYAGE_MODEL` to `voyage-4-lite`
+instead — a real, current model on the endpoint this code already calls
+correctly, and one of the models Voyage's pricing page lists with the
+200M-token free allowance. Zero payload changes needed. `VOYAGE_MODEL` stays
+env-overridable in case that model's availability changes before the demo.
+Switching to the real contextualized endpoint remains a valid future
+enhancement (see `docs/enhancements.md`) if retrieval quality on the real
+corpus turns out to need it.
+
 ## Sources are assembled in Python, not by the LLM
 
 The Synthesizer gets the answer *text* from the model, but the `sources` list

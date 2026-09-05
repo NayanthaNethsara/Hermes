@@ -34,7 +34,7 @@ import requests
 from docx import Document as DocxDocument
 from dotenv import load_dotenv
 from pypdf import PdfReader
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -42,16 +42,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 COLLECTION_NAME = "archive_chunks"
 
-# Overridable via .env so the model/endpoint can be swapped without a code
-# change if the free tier or model availability shifts. NOTE: Voyage's
-# contextualized-embedding models are served from a *different* endpoint
-# (/v1/contextualizedembeddings) with a different payload shape than the
-# standard /v1/embeddings used here - if embedding 400s on the configured
-# model, set VOYAGE_MODEL to a standard model (e.g. voyage-3.5-lite).
+# Overridable via .env so the model can be swapped without a code change.
+# "voyage-context-4" (the model originally specified for this project) does
+# not exist - Voyage's real contextualized-embedding model is
+# "voyage-context-3", served from a *different* endpoint
+# (/v1/contextualizedembeddings) with a nested-list payload shape, not the
+# flat list this file sends to /v1/embeddings. Using a real standard model
+# here instead of switching endpoints - see docs/decisions.md.
 VOYAGE_API_URL = os.environ.get(
     "VOYAGE_API_URL", "https://api.voyageai.com/v1/embeddings"
 )
-VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-context-4")
+VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-4-lite")
 EMBED_BATCH_SIZE = 32
 
 MIN_CHUNK_WORDS = 300
@@ -246,6 +247,17 @@ def build_chunks_for_document(
     return chunks
 
 
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """True for transient errors worth retrying (network hiccup, timeout,
+    429 rate-limit, 5xx) - False for a 4xx client error (bad model name,
+    malformed request, bad auth), which is deterministic and will fail
+    identically on every retry. Without this, tenacity burns the full
+    ~15s backoff on an error that could never have succeeded."""
+    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
 def require_voyage_api_key() -> str:
     """Fetch VOYAGE_API_KEY or fail fast with a clear message.
 
@@ -262,10 +274,17 @@ def require_voyage_api_key() -> str:
     return api_key
 
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(5))
+@retry(
+    retry=retry_if_exception(_is_retryable_api_error),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    stop=stop_after_attempt(5),
+)
 def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts with Voyage AI (voyage-context-4). Retries with
-    exponential backoff (1s, 2s, 4s, 8s) since the free tier rate-limits."""
+    """Embed a batch of texts with Voyage AI (VOYAGE_MODEL). Retries with
+    exponential backoff (1s, 2s, 4s, 8s) on transient errors (network,
+    timeout, 429, 5xx) since the free tier rate-limits - but not on a 4xx
+    client error like an invalid model name or bad request, which will
+    never succeed no matter how many times it's retried."""
     response = requests.post(
         VOYAGE_API_URL,
         headers={"Authorization": f"Bearer {require_voyage_api_key()}"},

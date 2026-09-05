@@ -16,6 +16,11 @@ node_modules/
 data/chroma/
 *.gpickle
 
+# The Ashen Era Archive corpus itself - read-only source material
+# (CLAUDE.md rule 2), too large/not ours to commit. Ingestion only reads
+# it via --corpus-path; it doesn't need to live in the repo at all.
+/Ashen_Era_Archive/
+
 # Next.js
 .next/
 out/

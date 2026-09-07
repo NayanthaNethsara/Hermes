@@ -11,7 +11,7 @@ HOST ?= 127.0.0.1
 PORT ?= 8000
 Q ?= In which year was the 'Gauntlet of Sorrowfell' actually forged?
 
-.PHONY: help setup setup-backend setup-frontend backend frontend health ask clean docker-build docker-up docker-down docker-logs
+.PHONY: help setup setup-backend setup-frontend backend frontend health ask clean docker-build docker-up docker-down docker-logs export-chat
 
 help:
 	@echo "The Archivist - Command Reference"
@@ -35,8 +35,11 @@ help:
 	@echo "  make docker-down      Stop and remove containers"
 	@echo "  make docker-logs      Follow container logs"
 	@echo ""
-	@echo "Utilities:"
 	@echo "  make clean            Remove build caches and temporary files"
+	@echo "  make export-chat      Export current AI chat session to ai_usage/"
+
+export-chat:
+	python3 ai_usage/export_chat.py
 
 setup-backend:
 	@if command -v uv >/dev/null 2>&1; then \

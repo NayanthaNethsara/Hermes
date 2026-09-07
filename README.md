@@ -28,12 +28,12 @@ Two front doors, one backend: a three-panel Next.js web UI and a Telegram bot.
 
 ## Setup
 
-**See [SETUP.md](SETUP.md)** for the full step-by-step — API keys, environment,
+**See [docs/SETUP.md](docs/SETUP.md)** for the full step-by-step — API keys, environment,
 ingestion, and running each piece. Short version: copy
 `configuration-example/.env.example` to `.env` at the repo root and fill in
 your keys.
 
-Read [SETUP.md § API budget](SETUP.md#api-budget) before a heavy testing
+Read [docs/SETUP.md § API budget](docs/SETUP.md#api-budget) before a heavy testing
 session — the OpenRouter free tier is the tightest constraint in the project.
 
 ## Docs
@@ -42,20 +42,19 @@ session — the OpenRouter free tier is the tightest constraint in the project.
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | System design, request flow, data model, and the frozen API contract (section 6) |
 | [docs/diagrams/architecture.md](docs/diagrams/architecture.md) | The same two diagrams as standalone files |
-| [SETUP.md](SETUP.md) | Getting it running, plus troubleshooting |
-| [TESTING_GUIDE.md](TESTING_GUIDE.md) | How to verify answer quality is good enough to submit, without more coding |
+| [docs/SETUP.md](docs/SETUP.md) | Getting it running, plus troubleshooting |
+| [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | How to verify answer quality is good enough to submit, without more coding |
 | [docs/decisions.md](docs/decisions.md) | Choices made along the way and why |
 | [docs/limitations.md](docs/limitations.md) | What's known to be weak or untested |
 | [docs/BUILD_PROMPTS.md](docs/BUILD_PROMPTS.md) | The build prompts each component was written from |
+| [docs/SKILLS.md](docs/SKILLS.md) | Agent skills and capabilities documentation |
 
 ## Layout
 
 ```
 src/
 ├── backend/       FastAPI app, orchestrator loop, agents, retrieval, trust layer
-├── ingestion/     corpus -> Chroma, and chunks -> knowledge graph (offline)
-├── frontend/      Next.js three-panel UI
-├── bot/           Telegram bot
-└── eval/          batch question runner
+└── frontend/      Next.js three-panel UI
 data/              Chroma DB + knowledge graph (generated, gitignored)
+docker-compose.yml Fullstack container orchestration
 ```

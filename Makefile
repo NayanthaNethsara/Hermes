@@ -22,6 +22,8 @@ help:
 	@echo "  make setup-frontend   Install frontend node_modules"
 	@echo ""
 	@echo "Services:"
+	@echo "  make db               Start PostgreSQL + pgvector container"
+	@echo "  make db-down          Stop PostgreSQL container"
 	@echo "  make backend          Start FastAPI backend server (port $(PORT))"
 	@echo "  make frontend         Start Next.js frontend dev server"
 	@echo ""
@@ -59,6 +61,12 @@ setup-frontend:
 
 setup: setup-backend setup-frontend
 
+db:
+	docker compose up -d db
+
+db-down:
+	docker compose stop db
+
 backend:
 	$(UVICORN) src.backend.main:app --reload --host $(HOST) --port $(PORT)
 
@@ -69,7 +77,7 @@ health:
 	curl -i http://$(HOST):$(PORT)/api/health
 
 ask:
-	$(PYTHON) -m src.backend.orchestrator "$(Q)"
+	$(PYTHON) -c 'import asyncio; from src.backend.agents.graphs.multimodal_1a import build_multimodal_1a_graph; from src.backend.agents.state.base import create_initial_state; g = build_multimodal_1a_graph(); res = asyncio.run(g.ainvoke(create_initial_state("$(Q)"))); print("\n--- ANSWER ---\n" + res.get("final_answer", "") + "\n\n--- FIGURES ---\n" + str(res.get("referenced_figures", [])))'
 
 docker-build:
 	docker compose build

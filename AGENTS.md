@@ -19,11 +19,20 @@
 .
 ├── .env
 ├── Makefile
+├── ai_usage/
 ├── configuration-example/
 ├── data/
+├── docker-compose.yml
 ├── docs/
 ├── sample_questions.json
 ├── sample_questions_1b_1c.json
 └── src/
+    ├── backend/
+    │   ├── Dockerfile
+    │   ├── pyproject.toml
+    │   └── requirements.txt
+    └── frontend/
+        ├── Dockerfile
+        └── package.json
 ```
 

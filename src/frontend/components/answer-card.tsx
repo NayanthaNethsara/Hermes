@@ -91,7 +91,6 @@ export function AnswerCard({
                 </div>
               </div>
             )}
-            <ContradictionBanner contradictions={response?.contradictions || []} />
 
             <div className="text-[14.5px] leading-relaxed text-[#d4d4d8] space-y-3 font-sans">
               <ReactMarkdown
@@ -206,6 +205,12 @@ export function AnswerCard({
                 <span className="inline-block w-1.5 h-3.5 ml-1 bg-white/70 animate-pulse align-middle" />
               )}
             </div>
+
+            <ContradictionBanner
+              contradictions={response?.contradictions || []}
+              sources={response?.sources || []}
+              onSelectDocument={onSelectDocument}
+            />
 
             {!isStreaming && standaloneFigures.length > 0 && (
               <div className="pt-3 border-t border-white/5 space-y-2">

@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.backend.agents.llm import get_chat_model
+from src.backend.agents.prompts import build_arbitration_snippets
 from src.backend.agents.state.models import ConversationalInvestigatorState
 from src.backend.core.config import get_settings
 from src.backend.core.logging import get_logger
@@ -31,11 +32,15 @@ ARBITRATOR_SYSTEM_PROMPT = (
     "- One source gives more or less detail than another.\n"
     "- Two sources describe different subjects, different moments, or different aspects.\n"
     "- A source hedges its own wording, or two sources use different words for the same thing.\n"
+    "- Names differ. Document identifiers, file names, article slugs and plate titles are "
+    "cataloguing labels, not claims the archive makes. A plate titled one way and an article "
+    "titled another is not a disagreement about anything.\n"
+    "- The dispute would be about naming or labelling rather than a fact of the world.\n"
     "\n"
     "Report nothing unless you can name both conflicting claims. When in doubt, report nothing.\n"
-    "Output ONLY a valid JSON array:\n"
-    '[{"topic": "The fact in dispute", "sources_disagree": ["doc_a", "doc_b"]}]\n'
-    "If no genuine contradiction exists, output an empty JSON array: []"
+    "Output ONLY a valid JSON object matching this schema:\n"
+    '{"analysis": "At most 1 concise sentence (under 25 words) comparing claims", "contradictions": [{"topic": "The fact in dispute", "sources_disagree": ["doc_a", "doc_b"]}]}\n'
+    "If no genuine contradiction exists, \"contradictions\" must be an empty array: []"
 )
 
 
@@ -102,14 +107,12 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
         {"active_figures": consolidated_figures} if consolidated_figures is not None else {}
     )
 
-    weights = [float((c.metadata_payload or {}).get("epistemic_weight", 0.5)) for c in sorted_chunks]
-    has_mixed_authority = len(set(weights)) > 1 and min(weights) < 0.8
-
-    if not has_mixed_authority and not state.get("contradictions"):
+    distinct_docs = list(dict.fromkeys([c.doc_id for c in sorted_chunks]))
+    if len(distinct_docs) < 2 and not state.get("contradictions"):
         steps.append({
             "step": len(steps) + 1,
             "action": "Epistemic Source Arbitration",
-            "found": f"Evaluated {len(sorted_chunks)} records; uniform authority detected — 0 contradictions found",
+            "found": f"Evaluated {len(sorted_chunks)} record(s) from a single source [{distinct_docs[0] if distinct_docs else 'none'}] — 0 contradictions possible",
         })
         return {
             "verified_chunks": sorted_chunks,
@@ -118,19 +121,13 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
             **figures_update,
         }
 
-    snippets: list[str] = []
-    for chunk in sorted_chunks[:6]:
-        meta = chunk.metadata_payload or {}
-        cat = meta.get("source_category", "unknown").upper()
-        weight = meta.get("epistemic_weight", 0.5)
-        snippets.append(f"[{chunk.doc_id} | Category: {cat} (Authority: {weight})]\n{chunk.content[:280]}")
-
     prompt = (
         f"Target Question: {state.get('root_query', '')}\n\n"
-        f"Archive Sources:\n" + "\n---\n".join(snippets) + "\n\n"
-        "Analyze for factual contradictions and return JSON array."
+        f"Archive Sources:\n{build_arbitration_snippets(sorted_chunks)}\n\n"
+        "Analyze for factual contradictions and return the JSON object."
     )
 
+    analysis_text = ""
     contradictions: list[dict[str, Any]] = []
     try:
         llm = get_chat_model(temperature=0.0)
@@ -141,17 +138,29 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
         content_text = response.content if isinstance(response.content, str) else str(response.content)
         cleaned = content_text.replace("```json", "").replace("```", "").strip()
 
-        json_match = re.search(r"\[[\s\S]*\]", cleaned)
-        if json_match:
-            parsed = json.loads(json_match.group(0))
-            if isinstance(parsed, list):
-                seen_topics: set[str] = set()
-                for item in parsed:
-                    if isinstance(item, dict):
-                        topic = str(item.get("topic", "")).strip().lower()
-                        if topic and topic not in seen_topics:
-                            seen_topics.add(topic)
-                            contradictions.append(item)
+        raw_items: list[Any] = []
+        obj_match = re.search(r"\{[\s\S]*\}", cleaned)
+        if obj_match:
+            parsed = json.loads(obj_match.group(0))
+            if isinstance(parsed, dict):
+                analysis_text = str(parsed.get("analysis", "")).strip()
+                cand_list = parsed.get("contradictions", [])
+                if isinstance(cand_list, list):
+                    raw_items = cand_list
+        else:
+            arr_match = re.search(r"\[[\s\S]*\]", cleaned)
+            if arr_match:
+                parsed = json.loads(arr_match.group(0))
+                if isinstance(parsed, list):
+                    raw_items = parsed
+
+        seen_topics: set[str] = set()
+        for item in raw_items:
+            if isinstance(item, dict):
+                topic = str(item.get("topic", "")).strip().lower()
+                if topic and topic not in seen_topics:
+                    seen_topics.add(topic)
+                    contradictions.append(item)
     except Exception as err:
         logger.warning("arbitration_evaluation_failed", error=str(err))
 
@@ -159,7 +168,7 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
         conflict_topics = [c.get("topic", "") for c in contradictions]
         summary = f"Flagged {len(contradictions)} canon contradiction(s): {'; '.join(conflict_topics[:2])}"
     else:
-        summary = f"Arbitrated {len(sorted_chunks)} records; canon claims reconciled without active conflict"
+        summary = f"Arbitrated {len(sorted_chunks)} records across {len(distinct_docs)} source(s); canon claims reconciled without active conflict"
 
     steps.append({
         "step": len(steps) + 1,

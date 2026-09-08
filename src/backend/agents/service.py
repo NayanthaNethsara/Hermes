@@ -1,17 +1,48 @@
 import json
 from typing import Any, AsyncGenerator
 
-from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from src.backend.agents.graphs.workflow import get_compiled_graph
 from src.backend.agents.sessions import upsert_session
 from src.backend.core.config import get_settings
+from src.backend.core.exceptions import (
+    DEPENDENCY_UNAVAILABLE_MESSAGE,
+    HermesException,
+    is_connectivity_error,
+    summarize_error,
+)
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.schemas import SearchResultChunk
 
 logger = get_logger("agent_service")
+
+STREAM_FAILURE_MESSAGE = "The research run failed before an answer could be produced."
+
+
+def describe_stream_failure(error: Exception) -> dict[str, Any]:
+    """Turn an exception into an SSE `error` payload the client can display."""
+    if isinstance(error, HermesException):
+        logger.warning(
+            "graph_stream_known_failure",
+            error=summarize_error(error),
+        )
+        message = error.message
+    elif is_connectivity_error(error):
+        logger.warning(
+            "graph_stream_dependency_unavailable",
+            error=summarize_error(error),
+        )
+        message = DEPENDENCY_UNAVAILABLE_MESSAGE
+    else:
+        logger.error("graph_stream_execution_error", error=summarize_error(error))
+        message = STREAM_FAILURE_MESSAGE
+    return {
+        "error": message,
+        "error_type": error.__class__.__name__,
+        "detail": summarize_error(error),
+    }
 
 
 class AgentRunRequest(BaseModel):
@@ -41,7 +72,11 @@ def format_sse_event(event: str, data: dict[str, Any]) -> str:
 
 def build_sources_payload(chunks: list[SearchResultChunk]) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
+    seen_documents: set[str] = set()
     for chunk in chunks:
+        if chunk.doc_id in seen_documents:
+            continue
+        seen_documents.add(chunk.doc_id)
         metadata = chunk.metadata_payload or {}
         category = metadata.get("source_category", "unknown")
         relevance = chunk.relevance_score or 0.0
@@ -112,7 +147,11 @@ class AgentService:
         session_id: str = "default",
         max_iterations: int = 5,
     ) -> AsyncGenerator[str, None]:
-        graph = await get_compiled_graph()
+        try:
+            graph = await get_compiled_graph()
+        except Exception as error:
+            yield format_sse_event("error", describe_stream_failure(error))
+            return
 
         initial_state = {
             "root_query": query,
@@ -183,7 +222,16 @@ class AgentService:
                     if isinstance(output, dict) and "reasoning_steps" in output:
                         latest_reasoning_steps = output["reasoning_steps"]
 
-                    if name == "retriever":
+                    if name in ("planner", "critic"):
+                        yield format_sse_event("metadata", {
+                            "sources": latest_sources,
+                            "referenced_figures": latest_figures,
+                            "citations": latest_citations,
+                            "contradictions": latest_contradictions,
+                            "reasoning_steps": latest_reasoning_steps,
+                        })
+
+                    elif name == "retriever":
                         chunks = output.get("active_chunks", [])
                         latest_sources = build_sources_payload(chunks)
                         latest_figures = output.get("active_figures", [])
@@ -193,6 +241,7 @@ class AgentService:
                             "sources": latest_sources,
                             "referenced_figures": latest_figures,
                             "citations": latest_citations,
+                            "contradictions": latest_contradictions,
                             "reasoning_steps": latest_reasoning_steps,
                         })
 
@@ -227,8 +276,7 @@ class AgentService:
                             yield format_sse_event("token", {"delta": token_str})
 
         except Exception as error:
-            logger.error("graph_stream_execution_error", error=str(error))
-            yield format_sse_event("error", {"error": str(error)})
+            yield format_sse_event("error", describe_stream_failure(error))
             return
 
         done_payload = {

@@ -25,6 +25,18 @@ async def execute_query(question: str) -> None:
     }
     result = await graph.ainvoke(initial_state)
 
+    reasoning_steps = result.get("reasoning_steps", [])
+    if reasoning_steps:
+        print(format_separator("-"))
+        print(f"AGENT REASONING DELIBERATION ({len(reasoning_steps)} STEPS)")
+        print(format_separator("-"))
+        for step in reasoning_steps:
+            step_num = step.get("step", "?")
+            action = step.get("action", "Action")
+            found = step.get("found", "")
+            print(f"  Step {step_num} [{action}]: {found}")
+        print()
+
     retrieved_chunks = result.get("verified_chunks", []) or result.get("active_chunks", [])
     print(format_separator("-"))
     print(f"RETRIEVED EVIDENCE CHUNKS ({len(retrieved_chunks)} MATCHES)")

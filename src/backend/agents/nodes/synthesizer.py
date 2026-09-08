@@ -1,8 +1,8 @@
+import re
 from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
 
 from src.backend.agents.llm import get_chat_model
 from src.backend.agents.prompts import (
@@ -18,12 +18,30 @@ from src.backend.retrieval.visuals import asset_url, describe_available_figures
 logger = get_logger("synthesizer")
 
 
-class StructuredSynthesisResult(BaseModel):
-    answer: str = Field(description="Rich, factual answer formatted in Markdown.")
-    referenced_figures: list[str] = Field(
-        default_factory=list,
-        description="List of asset URLs or figure paths referenced directly in the response.",
-    )
+IMAGE_LINE_PATTERN = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+
+
+def normalize_caption(text: str) -> str:
+    return text.strip().rstrip(".").strip().lower()
+
+
+def strip_caption_echo(answer: str) -> str:
+    cleaned: list[str] = []
+    pending_caption = ""
+    for line in answer.splitlines():
+        stripped = line.strip()
+        match = IMAGE_LINE_PATTERN.fullmatch(stripped)
+        if match:
+            pending_caption = normalize_caption(match.group(1))
+            cleaned.append(line)
+            continue
+        if pending_caption and normalize_caption(stripped) == pending_caption:
+            pending_caption = ""
+            continue
+        if stripped:
+            pending_caption = ""
+        cleaned.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned)).strip()
 
 
 async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str, Any]:
@@ -49,7 +67,7 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
             knowledge_gap=unresolved_gap,
         )
 
-    llm = get_chat_model(temperature=0.1)
+    llm = get_chat_model(temperature=0.0)
 
     accumulated_parts: list[str] = []
     try:
@@ -64,12 +82,19 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
                 else str(raw_chunk)
             )
             accumulated_parts.append(chunk_str)
-        answer_text = "".join(accumulated_parts).strip()
     except Exception as error:
-        logger.warning("synthesizer_invocation_fallback", error=str(error))
+        logger.error(
+            "synthesizer_generation_failed",
+            error_type=type(error).__name__,
+            error_detail=str(error),
+        )
+
+    answer_text = strip_caption_echo("".join(accumulated_parts))
+    if not answer_text:
         answer_text = (
-            f"Based on the archive evidence:\n\n"
-            + "\n".join([f"- {c.content[:300]}..." for c in chunks[:3]])
+            "I could not generate an answer for this question just now. "
+            f"The archive returned {len(chunks)} relevant passage(s), listed as sources below. "
+            "Please try again."
         )
 
     actual_referenced_figures = [

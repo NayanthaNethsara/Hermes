@@ -11,14 +11,19 @@ from src.backend.core.logging import get_logger
 logger = get_logger("planner")
 
 PLANNER_SYSTEM_PROMPT = (
-    "You are a conversational query rewriter and search planner for the Ashen Era Archive.\n"
-    "Your duty is to rewrite the latest question into a clear standalone retrieval query by resolving pronouns "
-    "(such as 'it', 'they', 'he', 'that fortress', 'this relic') using the recent dialogue history.\n"
+    "You are a research query planner and analyzer for the Ashen Era Archive.\n"
+    "Your duty is to analyze the research question, resolve any conversational references or pronouns "
+    "using dialogue history, and formulate a targeted retrieval strategy.\n"
+    "For compositional or multi-hop questions (such as 'Which war was won by the organization that included X?'), "
+    "identify the primary pivot entity (e.g., X's organization or faction) that must be investigated first.\n"
+    "Extract 1 to 2 targeted search queries optimized for hybrid keyword and dense vector retrieval. "
+    "Strip conversational filler and question wrappers.\n"
     "Output ONLY a valid JSON object matching this schema:\n"
-    '{"rewritten_query": "string", "search_terms": ["string"]}\n'
+    '{"analysis": "string", "rewritten_query": "string", "search_terms": ["string"]}\n'
     "Rules:\n"
-    "- If the question is already clear and standalone, keep it unchanged in 'rewritten_query'.\n"
-    "- 'search_terms' must contain 1-2 concise search queries optimized for keyword and vector search.\n"
+    "- 'analysis' briefly states the question's core subject or required investigative link.\n"
+    "- 'rewritten_query' is the complete standalone question with all pronouns resolved.\n"
+    "- 'search_terms' contains 1-2 concise, targeted queries naming the critical entities or facts.\n"
     "- Do not answer the question."
 )
 
@@ -26,40 +31,28 @@ PLANNER_SYSTEM_PROMPT = (
 async def plan_search_queries(state: ConversationalInvestigatorState) -> dict[str, Any]:
     root_query = state.get("root_query", "")
     messages = state.get("messages", [])
-
     steps = list(state.get("reasoning_steps", []))
 
-    if len(messages) <= 1:
-        steps.append({
-            "step": len(steps) + 1,
-            "action": "Contextual Query Planning",
-            "found": f"Initial standalone research query planned: '{root_query}'",
-        })
-        return {
-            "search_query": root_query,
-            "planned_queries": [root_query] if root_query else [],
-            "reasoning_steps": steps,
-        }
-
-    recent_history = messages[-4:-1] if len(messages) >= 4 else messages[:-1]
     history_lines: list[str] = []
-
     session_summary = state.get("session_summary")
     if session_summary:
         history_lines.append(f"Earlier Session Summary: {session_summary}")
 
-    for msg in recent_history:
-        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        history_lines.append(f"{role}: {content[:300]}")
+    if len(messages) > 1:
+        recent_history = messages[-4:-1] if len(messages) >= 4 else messages[:-1]
+        for msg in recent_history:
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            history_lines.append(f"{role}: {content[:300]}")
 
-    history_text = "\n".join(history_lines)
+    history_text = "\n".join(history_lines) if history_lines else "None (initial question)"
     user_prompt = (
         f"Conversation History:\n{history_text}\n\n"
-        f"Latest Question: {root_query}\n\n"
-        "Generate standalone query and search terms JSON."
+        f"Target Question: {root_query}\n\n"
+        "Analyze question structure, resolve references, and return JSON planning object."
     )
 
+    analysis_text = ""
     rewritten_query = root_query
     planned_queries = [root_query]
 
@@ -76,20 +69,27 @@ async def plan_search_queries(state: ConversationalInvestigatorState) -> dict[st
         if json_match:
             parsed = json.loads(json_match.group(0))
             if isinstance(parsed, dict):
-                rewritten_query = parsed.get("rewritten_query", root_query).strip() or root_query
+                analysis_text = str(parsed.get("analysis", "")).strip()
+                rewritten_query = str(parsed.get("rewritten_query", root_query)).strip() or root_query
                 search_terms = parsed.get("search_terms", [])
                 if isinstance(search_terms, list) and search_terms:
-                    planned_queries = [str(term).strip() for term in search_terms if str(term).strip()]
-                else:
-                    planned_queries = [rewritten_query]
+                    extracted_terms = [str(term).strip() for term in search_terms if str(term).strip()]
+                    if extracted_terms:
+                        planned_queries = extracted_terms
     except Exception as error:
         logger.warning("planner_execution_fallback", error=str(error))
 
     queries_display = ", ".join(f"'{q}'" for q in planned_queries)
+    planning_summary = (
+        f"{analysis_text} Formulated retrieval queries: {queries_display}"
+        if analysis_text
+        else f"Planned targeted retrieval queries: {queries_display}"
+    )
+
     steps.append({
         "step": len(steps) + 1,
         "action": "Contextual Query Planning",
-        "found": f"Resolved conversational pronouns against dialogue history into: {queries_display}",
+        "found": planning_summary,
     })
 
     return {

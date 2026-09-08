@@ -33,8 +33,9 @@ HERMES_SYSTEM_INSTRUCTION = (
     "- Add '## ' headings only when the answer is long enough to need sections.\n"
     "- Put numeric readings, dates, counts or ratings in a table once you report more than two.\n"
     "- Use `inline code` for exact identifiers, and bold for the figure that answers the question.\n"
-    "- Name sources in the prose. Do not write footnote markers or a sources list; the interface "
-    "displays sources separately.\n"
+    "- Cite sources by the document name shown in brackets above each evidence block. Do not add "
+    "a sources list; the interface shows sources separately.\n"
+    "- After embedding a figure, do not restate its caption as a sentence.\n"
     "- Never emit [[double bracket]] wikilinks, raw HTML, or a level-one '# ' heading.\n"
     "- Do not narrate your own search process or mention retrieval, chunks or evidence blocks."
 )
@@ -49,12 +50,12 @@ GREETING_INSTRUCTION = (
 
 def build_synthesis_context(chunks: list[Any]) -> str:
     context_blocks: list[str] = []
-    for index, chunk in enumerate(chunks):
+    for chunk in chunks:
         metadata = chunk.metadata_payload or {}
         category = metadata.get("source_category", "archive").upper()
         weight = float(metadata.get("epistemic_weight", 1.0))
         context_blocks.append(
-            f"[Source {index + 1}: {chunk.doc_id} | Category: {category} (Authority: {weight:.1f})]\n{chunk.content}"
+            f"[{chunk.doc_id} | Category: {category} (Authority: {weight:.1f})]\n{chunk.content}"
         )
     return "\n\n---\n\n".join(context_blocks)
 

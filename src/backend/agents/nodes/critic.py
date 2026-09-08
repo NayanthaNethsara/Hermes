@@ -14,6 +14,7 @@ from src.backend.agents.state.models import (
 )
 from src.backend.core.config import get_settings
 from src.backend.core.logging import get_logger
+from src.backend.retrieval.visuals import describe_available_figures
 
 logger = get_logger("critic")
 
@@ -41,7 +42,10 @@ CRITIC_SYSTEM_PROMPT = (
     "- 'next_queries' holds 1 or 2 searches for \"search_again\" only, each worded differently "
     "from the searches already run. It is an empty list for the other verdicts.\n"
     "- Do not answer the question yourself, and never require a source to repeat the question's "
-    "phrasing."
+    "phrasing.\n"
+    "- The figure descriptions are the archive's own analysis of its plates. For a question about "
+    "what an illustration shows or depicts, they are authoritative: if they record the detail, "
+    'the verdict is "answered".'
 )
 
 EVIDENCE_PREVIEW_CHARS = 600
@@ -110,6 +114,7 @@ async def assess_sufficiency(state: ConversationalInvestigatorState) -> dict[str
         f"Searches already run: {', '.join(queries_run) if queries_run else 'none'}\n"
         f"New passages found by the most recent search: {last_hop_yield}\n\n"
         f"Evidence gathered ({len(chunks)} passage(s)):\n{build_evidence_digest(chunks)}\n\n"
+        f"Figures in evidence:\n{describe_available_figures(state.get('active_figures', []))}\n\n"
         "Return the verdict JSON."
     )
 

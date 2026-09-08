@@ -7,9 +7,9 @@ from src.backend.core.logging import get_logger
 
 logger = get_logger("visuals")
 
-MAX_INSCRIBED_TEXT_CHARS = 220
-MAX_DESCRIPTION_CHARS = 260
-MAX_ATTRIBUTES = 6
+MAX_INSCRIBED_TEXT_CHARS = 600
+MAX_DESCRIPTION_CHARS = 900
+MAX_ATTRIBUTE_CHARS = 1000
 
 _catalog_cache: dict[str, Any] = {}
 _catalog_mtime: float | None = None
@@ -84,11 +84,16 @@ def describe_available_figures(figure_paths: list[str]) -> str:
 
         attributes = details.get("attributes") or {}
         if isinstance(attributes, dict) and attributes:
-            pairs = [
-                f"{key}={value}"
-                for key, value in list(attributes.items())[:MAX_ATTRIBUTES]
-            ]
-            lines.append(f"    Recorded data: {'; '.join(pairs)}")
+            pairs: list[str] = []
+            budget = MAX_ATTRIBUTE_CHARS
+            for key, value in attributes.items():
+                pair = f"{key}={value}"
+                if len(pair) > budget:
+                    break
+                pairs.append(pair)
+                budget -= len(pair) + 2
+            if pairs:
+                lines.append(f"    Recorded data: {'; '.join(pairs)}")
 
         entries.append("\n".join(lines))
 

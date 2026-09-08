@@ -27,6 +27,11 @@ help:
 	@echo "  make backend          Start FastAPI backend server (port $(PORT))"
 	@echo "  make frontend         Start Next.js frontend dev server"
 	@echo ""
+	@echo "Ingestion:"
+	@echo "  make ingest           Run offline ingestion on entire raw archive"
+	@echo "  make ingest-images    Ingest figure plates and visual assets only"
+	@echo "  make ingest-wiki      Ingest wiki articles and associated diagrams"
+	@echo ""
 	@echo "Testing & Query:"
 	@echo "  make health           Check backend health endpoint"
 	@echo "  make ask              Run orchestrator CLI with question (override with Q=\"...\")"
@@ -69,6 +74,18 @@ db-down:
 
 backend:
 	$(UVICORN) src.backend.main:app --reload --host $(HOST) --port $(PORT)
+
+ingest:
+	$(PYTHON) -m src.backend.workers.run_ingest
+
+preprocess-visuals:
+	$(PYTHON) scripts/preprocess_visuals.py
+
+ingest-images:
+	$(PYTHON) -m src.backend.workers.run_ingest --folder images
+
+ingest-wiki:
+	$(PYTHON) -m src.backend.workers.run_ingest --folder wiki
 
 frontend:
 	$(NPM) --prefix src/frontend run dev

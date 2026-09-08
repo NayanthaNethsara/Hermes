@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     )
 
     gcp_project_id: str = Field(default="", alias="GCP_PROJECT_ID")
-    gcp_location: str = Field(default="us-central1", alias="GCP_LOCATION")
-    gemini_model: str = Field(default="gemini-1.5-pro", alias="GEMINI_MODEL")
+    gcp_location: str = Field(default="global", alias="GCP_LOCATION")
+    gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
 
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(

@@ -1,4 +1,6 @@
 import hashlib
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from src.backend.ingestion.schemas import (
     ExtractedTable,
     SourceCategory,
 )
+from src.backend.ingestion.vision import VisionAnalyzer
 
 logger = get_logger(__name__)
 
@@ -32,7 +35,7 @@ def infer_source_category(file_path: Path) -> tuple[SourceCategory, float]:
         return SourceCategory.CODEX, EpistemicWeight.CODEX.value
     if "wiki" in path_string:
         return SourceCategory.WIKI, EpistemicWeight.WIKI.value
-    if "novel" in path_string or "book" in path_string:
+    if "chronicles" in path_string or "novel" in path_string or "book" in path_string:
         return SourceCategory.NOVEL, EpistemicWeight.NOVEL.value
     if "ephemera" in path_string or "letter" in path_string or "ledger" in path_string:
         return SourceCategory.EPHEMERA, EpistemicWeight.EPHEMERA.value
@@ -41,11 +44,29 @@ def infer_source_category(file_path: Path) -> tuple[SourceCategory, float]:
     return SourceCategory.UNKNOWN, EpistemicWeight.UNKNOWN.value
 
 
+def generate_image_description(filename: str) -> str:
+    name = Path(filename).stem
+    clean_name = re.sub(r"^(atmo_|plate_\d+_)", "", name).replace("_", " ").title()
+    name_lower = name.lower()
+    if "heraldry" in name_lower or "banner" in name_lower:
+        return f"Official heraldic banner, central emblem, and faction insignia of {clean_name}."
+    if "portrait" in name_lower or "character" in name_lower:
+        return f"Official illustration and character portrait of {clean_name}."
+    if "creature" in name_lower or "threat" in name_lower:
+        return f"Official threat-classification figure plate and anatomical diagram for creature {clean_name}."
+    if "artifact" in name_lower or "relic" in name_lower:
+        return f"Official figure plate, technical diagram, and attunement cost plate for relic {clean_name}."
+    if "location" in name_lower or "landscape" in name_lower or "keep" in name_lower or "citadel" in name_lower:
+        return f"Official figure plate, architectural view, and recorded garrison strength for {clean_name}."
+    return f"Official figure plate and visual plate for {clean_name}."
+
+
 class DocumentParser:
     def __init__(self, output_assets_dir: Path | None = None) -> None:
         settings = get_settings()
         self.output_assets_dir = output_assets_dir or settings.extracted_assets_dir
         self.output_assets_dir.mkdir(parents=True, exist_ok=True)
+        self.vision_analyzer = VisionAnalyzer()
 
     def parse_document(
         self, file_path: Path
@@ -63,15 +84,193 @@ class DocumentParser:
             epistemic_weight=weight,
         )
 
+        suffix = file_path.suffix.lower()
+
+        if suffix in [".png", ".jpg", ".jpeg"]:
+            return self._parse_standalone_image(file_path, metadata)
+
+        if suffix == ".md":
+            return self._parse_markdown(file_path, metadata)
+
+        if suffix == ".docx":
+            return self._parse_docx(file_path, metadata)
+
+        if suffix == ".pdf":
+            return self._parse_pdf(file_path, metadata)
+
+        if suffix == ".txt":
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+            return metadata, [], [], content
+
         try:
             return self._parse_with_docling(file_path, metadata)
         except Exception as error:
-            logger.warning(
-                "docling_parser_fallback_triggered",
-                file_path=str(file_path),
-                error_detail=str(error),
+            logger.warning("fallback_to_text", file=str(file_path), error_detail=str(error))
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+            return metadata, [], [], content
+
+    def _parse_standalone_image(
+        self, file_path: Path, metadata: DocumentMetadata
+    ) -> tuple[DocumentMetadata, list[ExtractedFigure], list[ExtractedTable], str]:
+        asset_filename = f"{file_path.name}"
+        destination_path = self.output_assets_dir / asset_filename
+        if not destination_path.exists():
+            shutil.copy2(file_path, destination_path)
+
+        with Image.open(file_path) as img:
+            width, height = img.size
+
+        try:
+            analysis = self.vision_analyzer.analyze_image(file_path)
+            caption = f"{analysis.title}: {analysis.extracted_text[:120]}" if analysis.extracted_text else analysis.title
+            full_content = analysis.rich_content
+        except Exception as error:
+            logger.warning("vision_analyzer_fallback", file=file_path.name, error_detail=str(error))
+            description = generate_image_description(file_path.name)
+            caption = description
+            full_content = (
+                f"# Visual Figure Plate: {metadata.doc_id}\n\n"
+                f"{description}\n\n"
+                f"Asset Path: /assets/{asset_filename}\n"
+                f"Source: {file_path.name}"
             )
-            return self._parse_with_fallback(file_path, metadata)
+
+        figure = ExtractedFigure(
+            figure_id=metadata.doc_id,
+            page_number=1,
+            bounding_box=(0.0, 0.0, float(width), float(height)),
+            local_image_path=destination_path,
+            caption=caption,
+        )
+
+        return metadata, [figure], [], full_content
+
+    def _parse_markdown(
+        self, file_path: Path, metadata: DocumentMetadata
+    ) -> tuple[DocumentMetadata, list[ExtractedFigure], list[ExtractedTable], str]:
+        text_content = file_path.read_text(encoding="utf-8", errors="ignore")
+        extracted_figures: list[ExtractedFigure] = []
+
+        image_pattern = re.compile(r"!\[(.*?)\]\((.*?)\)")
+        matches = image_pattern.findall(text_content)
+
+        for alt_text, image_rel_path in matches:
+            resolved_image_path = (file_path.parent / image_rel_path).resolve()
+            if resolved_image_path.exists():
+                asset_filename = resolved_image_path.name
+                destination_path = self.output_assets_dir / asset_filename
+                if not destination_path.exists():
+                    shutil.copy2(resolved_image_path, destination_path)
+
+                text_content = text_content.replace(f"({image_rel_path})", f"(/assets/{asset_filename})")
+
+                extracted_figures.append(
+                    ExtractedFigure(
+                        figure_id=f"{metadata.doc_id}_{resolved_image_path.stem}",
+                        page_number=1,
+                        bounding_box=(0.0, 0.0, 0.0, 0.0),
+                        local_image_path=destination_path,
+                        caption=alt_text or generate_image_description(resolved_image_path.name),
+                    )
+                )
+
+        return metadata, extracted_figures, [], text_content
+
+    def _parse_docx(
+        self, file_path: Path, metadata: DocumentMetadata
+    ) -> tuple[DocumentMetadata, list[ExtractedFigure], list[ExtractedTable], str]:
+        import docx
+
+        document = docx.Document(file_path)
+        paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
+
+        table_markdown_blocks: list[str] = []
+        for table in document.tables:
+            rows_data: list[list[str]] = []
+            for row in table.rows:
+                rows_data.append([cell.text.strip() for cell in row.cells])
+            if rows_data:
+                header = "| " + " | ".join(rows_data[0]) + " |"
+                separator = "| " + " | ".join(["---"] * len(rows_data[0])) + " |"
+                body = "\n".join("| " + " | ".join(row) + " |" for row in rows_data[1:])
+                table_markdown_blocks.append(f"{header}\n{separator}\n{body}")
+
+        full_content = "\n\n".join(paragraphs)
+        if table_markdown_blocks:
+            full_content += "\n\n### Tables\n\n" + "\n\n".join(table_markdown_blocks)
+
+        return metadata, [], [], full_content
+
+    def _parse_pdf(
+        self, file_path: Path, metadata: DocumentMetadata
+    ) -> tuple[DocumentMetadata, list[ExtractedFigure], list[ExtractedTable], str]:
+        import fitz
+
+        document = fitz.open(file_path)
+        metadata.page_count = len(document)
+        text_parts: list[str] = []
+        extracted_figures: list[ExtractedFigure] = []
+
+        is_scanned_pdf = ".scan" in file_path.name.lower()
+
+        for page_index, page in enumerate(document):
+            page_text = page.get_text().strip()
+            page_figure_markers: list[str] = []
+
+            image_list = page.get_images(full=True)
+            for image_index, img_info in enumerate(image_list):
+                xref = img_info[0]
+                base_image = document.extract_image(xref)
+                image_bytes = base_image["image"]
+                ext = base_image["ext"]
+                image_filename = f"{metadata.file_hash[:8]}_{file_path.stem}_p{page_index + 1}_{image_index}.{ext}"
+                dest = self.output_assets_dir / image_filename
+                if not dest.exists():
+                    with open(dest, "wb") as f:
+                        f.write(image_bytes)
+
+                page_figure_markers.append(f"![Figure p.{page_index + 1}](/assets/{image_filename})")
+                extracted_figures.append(
+                    ExtractedFigure(
+                        figure_id=f"{metadata.doc_id}_p{page_index + 1}_img{image_index}",
+                        page_number=page_index + 1,
+                        bounding_box=(0.0, 0.0, 0.0, 0.0),
+                        local_image_path=dest,
+                        caption=f"Figure from {file_path.stem} page {page_index + 1}",
+                    )
+                )
+
+            figures_str = "\n".join(page_figure_markers)
+
+            if is_scanned_pdf and not page_text:
+                page_pix = page.get_pixmap(dpi=150)
+                scan_filename = f"scan_{metadata.file_hash[:8]}_{file_path.stem}_p{page_index + 1}.png"
+                scan_dest = self.output_assets_dir / scan_filename
+                if not scan_dest.exists():
+                    page_pix.save(str(scan_dest))
+
+                try:
+                    analysis = self.vision_analyzer.analyze_image(scan_dest)
+                    text_parts.append(
+                        f"## Page {page_index + 1} (Historical Scan Analysis)\n\n"
+                        f"![Historical Document Scan](/assets/{scan_filename})\n\n"
+                        f"{analysis.rich_content}"
+                    )
+                except Exception as vision_err:
+                    logger.warning("scan_vision_analysis_failed", file=file_path.name, page=page_index + 1, error=str(vision_err))
+                    text_parts.append(
+                        f"## Page {page_index + 1}\n\n![Historical Document Scan](/assets/{scan_filename})"
+                    )
+            elif page_text:
+                if figures_str:
+                    text_parts.append(f"## Page {page_index + 1}\n\n{page_text}\n\n{figures_str}")
+                else:
+                    text_parts.append(f"## Page {page_index + 1}\n\n{page_text}")
+            elif figures_str:
+                text_parts.append(f"## Page {page_index + 1}\n\n{figures_str}")
+
+        content = "\n\n".join(text_parts) if text_parts else f"Document {file_path.stem}"
+        return metadata, extracted_figures, [], content
 
     def _parse_with_docling(
         self, file_path: Path, metadata: DocumentMetadata
@@ -81,66 +280,5 @@ class DocumentParser:
         converter = DocumentConverter()
         result = converter.convert(file_path)
         doc = result.document
-
-        extracted_figures: list[ExtractedFigure] = []
-        extracted_tables: list[ExtractedTable] = []
-
         raw_markdown = doc.export_to_markdown()
-        return metadata, extracted_figures, extracted_tables, raw_markdown
-
-    def _parse_with_fallback(
-        self, file_path: Path, metadata: DocumentMetadata
-    ) -> tuple[DocumentMetadata, list[ExtractedFigure], list[ExtractedTable], str]:
-        suffix = file_path.suffix.lower()
-        extracted_figures: list[ExtractedFigure] = []
-        extracted_tables: list[ExtractedTable] = []
-
-        if suffix in [".png", ".jpg", ".jpeg"]:
-            figure_path = self.output_assets_dir / f"{metadata.file_hash[:12]}_full.png"
-            image = Image.open(file_path)
-            image.save(figure_path)
-            extracted_figures.append(
-                ExtractedFigure(
-                    figure_id=f"{metadata.doc_id}_fig_0",
-                    page_number=1,
-                    bounding_box=(0.0, 0.0, float(image.width), float(image.height)),
-                    local_image_path=figure_path,
-                    caption=metadata.doc_id,
-                )
-            )
-            return metadata, extracted_figures, extracted_tables, f"Visual Asset: {metadata.doc_id}"
-
-        if suffix == ".pdf":
-            import fitz
-
-            document = fitz.open(file_path)
-            metadata.page_count = len(document)
-            full_text_parts: list[str] = []
-
-            for page_index, page in enumerate(document):
-                full_text_parts.append(page.get_text())
-                image_list = page.get_images(full=True)
-                for image_index, img_info in enumerate(image_list):
-                    xref = img_info[0]
-                    base_image = document.extract_image(xref)
-                    image_bytes = base_image["image"]
-                    ext = base_image["ext"]
-                    image_filename = f"{metadata.file_hash[:12]}_p{page_index + 1}_img{image_index}.{ext}"
-                    image_save_path = self.output_assets_dir / image_filename
-                    with open(image_save_path, "wb") as image_file:
-                        image_file.write(image_bytes)
-
-                    extracted_figures.append(
-                        ExtractedFigure(
-                            figure_id=f"{metadata.doc_id}_p{page_index + 1}_img{image_index}",
-                            page_number=page_index + 1,
-                            bounding_box=(0.0, 0.0, 0.0, 0.0),
-                            local_image_path=image_save_path,
-                            caption=f"Extracted figure from page {page_index + 1}",
-                        )
-                    )
-
-            return metadata, extracted_figures, extracted_tables, "\n\n".join(full_text_parts)
-
-        text_content = file_path.read_text(encoding="utf-8", errors="ignore")
-        return metadata, extracted_figures, extracted_tables, text_content
+        return metadata, [], [], raw_markdown

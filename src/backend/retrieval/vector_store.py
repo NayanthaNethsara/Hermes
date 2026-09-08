@@ -4,10 +4,15 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Column,
+    DateTime,
+    Float,
+    ForeignKey,
     Index,
+    Integer,
     String,
     Table,
     Text,
+    delete,
     func,
     select,
     text,
@@ -22,13 +27,26 @@ from src.backend.retrieval.schemas import SearchResultChunk
 logger = get_logger(__name__)
 
 
+class DocumentFileModel(Base):
+    __tablename__ = "documents"
+
+    file_hash = Column(String(64), primary_key=True)
+    doc_id = Column(String(128), nullable=False, index=True)
+    file_path = Column(Text, nullable=False)
+    source_category = Column(String(32), nullable=False)
+    epistemic_weight = Column(Float, nullable=False, default=1.0)
+    chunk_count = Column(Integer, default=0)
+    figure_count = Column(Integer, default=0)
+    processed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class DocumentChunkModel(Base):
     __tablename__ = "document_chunks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chunk_id = Column(String(128), unique=True, nullable=False, index=True)
     doc_id = Column(String(128), nullable=False, index=True)
-    file_hash = Column(String(64), nullable=False, index=True)
+    file_hash = Column(String(64), ForeignKey("documents.file_hash", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
     embedding = Column(Vector(1024), nullable=False)
     tsv = Column(TSVECTOR)
@@ -49,6 +67,39 @@ class DocumentChunkModel(Base):
 class PostgresVectorStore:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def has_document(self, file_hash: str) -> bool:
+        query = select(func.count()).select_from(DocumentFileModel).where(DocumentFileModel.file_hash == file_hash)
+        result = await self.session.execute(query)
+        count = result.scalar_one_or_none() or 0
+        return count > 0
+
+    async def delete_document(self, file_hash: str) -> None:
+        stmt = delete(DocumentFileModel).where(DocumentFileModel.file_hash == file_hash)
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def record_document(
+        self,
+        doc_id: str,
+        file_hash: str,
+        file_path: str,
+        source_category: str,
+        epistemic_weight: float,
+        chunk_count: int,
+        figure_count: int,
+    ) -> None:
+        record = DocumentFileModel(
+            file_hash=file_hash,
+            doc_id=doc_id,
+            file_path=file_path,
+            source_category=source_category,
+            epistemic_weight=epistemic_weight,
+            chunk_count=chunk_count,
+            figure_count=figure_count,
+        )
+        await self.session.merge(record)
+        await self.session.flush()
 
     async def insert_chunks(
         self,
@@ -76,17 +127,17 @@ class PostgresVectorStore:
     ) -> list[SearchResultChunk]:
         vector_str = "[" + ",".join(str(x) for x in query_vector) + "]"
 
-        hybrid_query = text(f"""
+        hybrid_query = text("""
             WITH vector_matches AS (
                 SELECT 
                     chunk_id,
                     doc_id,
                     content,
                     metadata_payload,
-                    ROW_NUMBER() OVER (ORDER BY embedding <=> :vector_param::vector) as vector_rank,
-                    (1 - (embedding <=> :vector_param::vector)) as vector_score
+                    ROW_NUMBER() OVER (ORDER BY embedding <=> CAST(:vector_param AS vector)) as vector_rank,
+                    (1 - (embedding <=> CAST(:vector_param AS vector))) as vector_score
                 FROM document_chunks
-                ORDER BY embedding <=> :vector_param::vector
+                ORDER BY embedding <=> CAST(:vector_param AS vector)
                 LIMIT :candidate_limit
             ),
             keyword_matches AS (

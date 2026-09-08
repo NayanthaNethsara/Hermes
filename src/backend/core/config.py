@@ -19,6 +19,23 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
     )
 
+    @property
+    def psycopg_dsn(self) -> str:
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    redis_url: str = Field(
+        default="redis://localhost:6379/0", alias="REDIS_URL"
+    )
+    redis_rate_limit_requests: int = Field(
+        default=30, alias="REDIS_RATE_LIMIT_REQUESTS"
+    )
+    redis_rate_limit_window_seconds: int = Field(
+        default=60, alias="REDIS_RATE_LIMIT_WINDOW_SECONDS"
+    )
+    redis_cache_ttl_seconds: int = Field(
+        default=3600, alias="REDIS_CACHE_TTL_SECONDS"
+    )
+
     voyage_api_key: str = Field(default="", alias="VOYAGE_API_KEY")
     voyage_embedding_model: str = Field(
         default="voyage-multimodal-3.5", alias="VOYAGE_MODEL"

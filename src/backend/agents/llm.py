@@ -12,38 +12,33 @@ logger = get_logger(__name__)
 def get_chat_model(temperature: float = 0.1) -> BaseChatModel:
     settings = get_settings()
 
-    if settings.gcp_project_id:
-        try:
-            from langchain_google_vertexai import ChatVertexAI
-
-            logger.info(
-                "initializing_vertex_ai_chat_model",
-                model=settings.gemini_model,
-                project=settings.gcp_project_id,
-            )
-            return ChatVertexAI(
-                model_name=settings.gemini_model,
-                project=settings.gcp_project_id,
-                location=settings.gcp_location,
-                temperature=temperature,
-            )
-        except Exception as error:
-            logger.warning(
-                "vertex_ai_initialization_failed_falling_back",
-                error_detail=str(error),
-            )
-
     google_api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if google_api_key:
+
+    if settings.gcp_project_id or google_api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
 
-            logger.info("initializing_google_genai_chat_model", model=settings.gemini_model)
-            return ChatGoogleGenerativeAI(
+            kwargs: dict[str, Any] = {
+                "model": settings.gemini_model,
+                "temperature": temperature,
+                "automatic_function_calling_config": {"disable": True},
+            }
+
+            if google_api_key:
+                kwargs["google_api_key"] = google_api_key
+
+            if settings.gcp_project_id:
+                kwargs["project"] = settings.gcp_project_id
+
+            if settings.gcp_location:
+                kwargs["location"] = settings.gcp_location
+
+            logger.info(
+                "initializing_google_genai_chat_model",
                 model=settings.gemini_model,
-                google_api_key=google_api_key,
-                temperature=temperature,
+                project=settings.gcp_project_id,
             )
+            return ChatGoogleGenerativeAI(**kwargs)
         except Exception as error:
             logger.warning(
                 "google_genai_initialization_failed_falling_back",

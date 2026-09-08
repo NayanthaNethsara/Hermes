@@ -1,4 +1,11 @@
-from src.backend.agents.graphs.investigator_1c import build_investigator_1c_graph
-from src.backend.agents.graphs.multimodal_1a import build_multimodal_1a_graph
+from src.backend.agents.graphs.workflow import (
+    build_unified_graph,
+    get_checkpointer,
+    get_compiled_graph,
+)
 
-__all__ = ["build_multimodal_1a_graph", "build_investigator_1c_graph"]
+__all__ = [
+    "build_unified_graph",
+    "get_compiled_graph",
+    "get_checkpointer",
+]

@@ -1,123 +1,94 @@
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
-from src.backend.agents.graphs.investigator_1c import build_investigator_1c_graph
-from src.backend.agents.graphs.multimodal_1a import build_multimodal_1a_graph
-from src.backend.agents.state.base import create_initial_state
-from src.backend.agents.stream import stream_agent_track
+from src.backend.agents.service import (
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentService,
+    AskRequest,
+)
+from src.backend.agents.sessions import delete_session, get_session, list_sessions
 
 router = APIRouter(tags=["agents"])
 
-
-class AgentRunRequest(BaseModel):
-    query: str
-    max_iterations: int = Field(default=5, ge=1, le=10)
-
-
-class AgentRunResponse(BaseModel):
-    answer: str
-    referenced_figures: list[str] = Field(default_factory=list)
-    citations: list[str] = Field(default_factory=list)
-    iteration_count: int = 0
-    sources: list[dict[str, Any]] = Field(default_factory=list)
-    reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
-    contradictions: list[dict[str, Any]] = Field(default_factory=list)
+STREAM_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Content-Type": "text/event-stream",
+    "X-Accel-Buffering": "no",
+}
 
 
-class AskRequest(BaseModel):
-    question: str
-
-
-@router.post("/agents/run/{track_id}", response_model=AgentRunResponse)
-async def run_agent_track(
-    track_id: str,
+@router.post("/agents/run", response_model=AgentRunResponse)
+@router.post("/agents/run/{track_id}", response_model=AgentRunResponse, include_in_schema=False)
+async def run_agent(
     payload: AgentRunRequest,
+    track_id: Optional[str] = None,
 ) -> AgentRunResponse:
-    track_normalized = track_id.lower().replace("-", "_").replace("track_", "").strip()
-
-    if track_normalized in ["1a", "multimodal", "multimodal_1a"]:
-        graph = build_multimodal_1a_graph()
-    elif track_normalized in ["1c", "investigator", "investigator_1c"]:
-        graph = build_investigator_1c_graph()
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown track '{track_id}'. Available: '1a' (multimodal) or '1c' (investigator)",
-        )
-
-    initial_state = create_initial_state(
+    return await AgentService.run(
         query=payload.query,
+        session_id=payload.session_id,
         max_iterations=payload.max_iterations,
-    )
-
-    final_state = await graph.ainvoke(initial_state)
-
-    sources_list: list[dict[str, Any]] = []
-    for chunk in final_state.get("retrieved_context", []):
-        meta = chunk.metadata_payload or {}
-        cat = meta.get("source_category", "unknown")
-        sources_list.append({
-            "chunk_id": chunk.chunk_id,
-            "title": chunk.doc_id,
-            "section": meta.get("section_title", "General"),
-            "category": cat,
-            "epistemic_weight": meta.get("epistemic_weight", 0.5),
-            "vector_score": round(chunk.vector_score, 4) if chunk.vector_score is not None else None,
-            "keyword_score": round(chunk.keyword_score, 4) if chunk.keyword_score is not None else None,
-            "relevance_score": round(chunk.relevance_score, 4),
-            "figures": chunk.figure_references,
-            "trust": "high" if cat in ["codex", "image"] or chunk.relevance_score > 0.7 else "medium",
-            "snippet": chunk.content[:300],
-        })
-
-    reasoning_steps = [
-        {"step": 1, "action": "Hybrid vector and keyword search", "found": f"{len(final_state.get('retrieved_context', []))} chunks"},
-        {"step": 2, "action": "Multimodal figure linking", "found": f"{len(final_state.get('referenced_figures', []))} figures"},
-    ]
-
-    return AgentRunResponse(
-        answer=final_state.get("final_answer", ""),
-        referenced_figures=final_state.get("referenced_figures", []),
-        citations=final_state.get("citations", []),
-        iteration_count=final_state.get("iteration_count", 1),
-        sources=sources_list,
-        reasoning_steps=reasoning_steps,
-        contradictions=final_state.get("contradictions", []),
     )
 
 
 @router.post("/api/ask", response_model=AgentRunResponse)
 async def ask_endpoint(payload: AskRequest) -> AgentRunResponse:
-    request = AgentRunRequest(query=payload.question)
-    return await run_agent_track(track_id="1a", payload=request)
+    return await AgentService.run(
+        query=payload.question,
+        session_id=payload.session_id,
+        max_iterations=payload.max_iterations,
+    )
 
 
-@router.post("/agents/stream/{track_id}")
-async def run_agent_stream_track(
-    track_id: str,
+@router.post("/agents/stream")
+@router.post("/agents/stream/{track_id}", include_in_schema=False)
+async def run_agent_stream(
     payload: AgentRunRequest,
+    track_id: Optional[str] = None,
 ) -> StreamingResponse:
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Content-Type": "text/event-stream",
-        "X-Accel-Buffering": "no",
-    }
     return StreamingResponse(
-        stream_agent_track(
-            track_id=track_id,
+        AgentService.stream(
             query=payload.query,
+            session_id=payload.session_id,
             max_iterations=payload.max_iterations,
         ),
         media_type="text/event-stream",
-        headers=headers,
+        headers=STREAM_HEADERS,
     )
 
 
 @router.post("/api/ask/stream")
 async def ask_stream_endpoint(payload: AskRequest) -> StreamingResponse:
-    request = AgentRunRequest(query=payload.question)
-    return await run_agent_stream_track(track_id="1a", payload=request)
+    return StreamingResponse(
+        AgentService.stream(
+            query=payload.question,
+            session_id=payload.session_id,
+            max_iterations=payload.max_iterations,
+        ),
+        media_type="text/event-stream",
+        headers=STREAM_HEADERS,
+    )
+
+
+@router.get("/api/sessions")
+async def get_all_sessions() -> list[dict[str, Any]]:
+    return await list_sessions()
+
+
+@router.get("/api/sessions/{session_id}")
+async def get_session_by_id(session_id: str) -> dict[str, Any]:
+    session = await get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
+    return session
+
+
+@router.delete("/api/sessions/{session_id}")
+async def remove_session_by_id(session_id: str) -> dict[str, bool]:
+    is_deleted = await delete_session(session_id)
+    if not is_deleted:
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
+    return {"ok": True}

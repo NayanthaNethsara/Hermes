@@ -1,8 +1,11 @@
+import hashlib
 from typing import Any
 
 from src.backend.agents.state.models import AgentState
+from src.backend.core.config import get_settings
 from src.backend.core.database import session_scope
 from src.backend.core.logging import get_logger
+from src.backend.core.redis import redis_get_json, redis_set_json
 from src.backend.ingestion.embedder import MultimodalEmbedder
 from src.backend.retrieval.reranker import CrossEncoderReranker
 from src.backend.retrieval.schemas import SearchResultChunk
@@ -12,10 +15,43 @@ logger = get_logger("retriever")
 
 
 async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
-    search_queries = state.get("search_queries", [])
-    if not search_queries:
-        search_queries = [state.get("root_query", "")]
+    steps = list(state.get("reasoning_steps", []))
 
+    if state.get("is_conversational"):
+        steps.append({
+            "step": 3,
+            "action": "Hybrid Archive Retrieval",
+            "found": "Search bypassed — conversational greeting fast-path",
+        })
+        return {
+            "active_chunks": [],
+            "active_figures": [],
+            "retrieved_context": [],
+            "figures": [],
+            "figure_urls": [],
+            "reasoning_steps": steps,
+        }
+
+    search_query = state.get("search_query") or state.get("root_query", "")
+    planned_queries = state.get("planned_queries") or state.get("search_queries", [])
+    queries_to_run = planned_queries if planned_queries else ([search_query] if search_query else [])
+
+    if not queries_to_run:
+        steps.append({
+            "step": 3,
+            "action": "Hybrid Archive Retrieval",
+            "found": "No queries planned — 0 chunks retrieved",
+        })
+        return {
+            "active_chunks": [],
+            "active_figures": [],
+            "retrieved_context": [],
+            "figures": [],
+            "figure_urls": [],
+            "reasoning_steps": steps,
+        }
+
+    settings = get_settings()
     embedder = MultimodalEmbedder()
     reranker = CrossEncoderReranker()
     existing_chunks = state.get("retrieved_context", [])
@@ -26,24 +62,57 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
     async with session_scope() as session:
         store = PostgresVectorStore(session)
 
-        for query in search_queries:
-            query_vectors = await embedder.embed_texts([query], input_type="query")
-            query_vector = query_vectors[0] if query_vectors else [0.0] * 1024
+        for query in queries_to_run:
+            normalized_query = query.strip().lower()
+            query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()
+            cache_key = f"cache:retrieval:{query_hash}"
 
-            candidates = await store.hybrid_search_rrf(
-                query_text=query,
-                query_vector=query_vector,
-                top_k=50,
-            )
-
-            try:
-                top_results = await reranker.rerank(
+            cached_payload = await redis_get_json(cache_key)
+            if cached_payload is not None and isinstance(cached_payload, dict):
+                cached_chunk_dicts = cached_payload.get("chunks", [])
+                cached_chunks = [
+                    SearchResultChunk.model_validate(item) for item in cached_chunk_dicts
+                ]
+                top_results = cached_chunks
+                logger.info(
+                    "retrieval_cache_hit",
                     query=query,
-                    candidates=candidates,
-                    top_k=5,
+                    chunks_count=len(top_results),
                 )
-            except Exception:
-                top_results = candidates[:5]
+            else:
+                query_vectors = await embedder.embed_texts([query], input_type="query")
+                query_vector = query_vectors[0] if query_vectors else [0.0] * 1024
+
+                candidates = await store.hybrid_search_rrf(
+                    query_text=query,
+                    query_vector=query_vector,
+                    top_k=50,
+                )
+
+                try:
+                    top_results = await reranker.rerank(
+                        query=query,
+                        candidates=candidates,
+                        top_k=5,
+                    )
+                except Exception:
+                    top_results = candidates[:5]
+
+                await redis_set_json(
+                    cache_key,
+                    {
+                        "chunks": [chunk.model_dump() for chunk in top_results],
+                        "figures": [
+                            fig for chunk in top_results for fig in chunk.figure_references
+                        ],
+                    },
+                    ttl_seconds=settings.redis_cache_ttl_seconds,
+                )
+                logger.info(
+                    "retrieval_cache_miss_persisted",
+                    query=query,
+                    chunks_count=len(top_results),
+                )
 
             for chunk in top_results:
                 if chunk.chunk_id not in existing_ids:
@@ -65,8 +134,24 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
     iteration = state.get("iteration_count", 0) + 1
     unique_figures = list(dict.fromkeys(collected_figures))
 
+    top_doc_names = list(dict.fromkeys([c.doc_id for c in all_chunks]))[:4]
+    docs_summary = ", ".join(f"`{d}`" for d in top_doc_names) if top_doc_names else "none"
+    retrieval_detail = f"Found {len(all_chunks)} relevant passage(s) across [{docs_summary}]"
+    if unique_figures:
+        retrieval_detail += f" and linked {len(unique_figures)} visual figure(s)"
+
+    steps.append({
+        "step": 3,
+        "action": "Hybrid Archive Retrieval",
+        "found": retrieval_detail,
+    })
+
     return {
+        "active_chunks": all_chunks,
+        "active_figures": unique_figures,
         "retrieved_context": all_chunks,
         "figures": unique_figures,
+        "figure_urls": unique_figures,
         "iteration_count": iteration,
+        "reasoning_steps": steps,
     }

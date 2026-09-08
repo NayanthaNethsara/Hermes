@@ -22,16 +22,30 @@ function formatFigureCaption(path: string): string {
 export function AnswerCard({
   question,
   response,
+  statusMessage,
+  isStreaming,
   onSelectDocument,
   onSelectImage,
 }: {
   question: string;
   response: HermesResponse | null;
+  statusMessage?: string;
+  isStreaming?: boolean;
   onSelectDocument?: (docId: string) => void;
   onSelectImage?: (imagePath: string) => void;
 }) {
   const [showSources, setShowSources] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+
+  const answerText = response?.answer || "";
+  const standaloneFigures = (response?.referenced_figures || []).filter((figureUrl) => {
+    const filename = figureUrl.split("/").pop() || figureUrl;
+    return !answerText.includes(figureUrl) && !answerText.includes(filename);
+  });
+
+  const hasContent = Boolean(
+    response && (response.answer || (response.sources && response.sources.length > 0))
+  );
 
   return (
     <div className="space-y-4 w-full max-w-2xl mx-auto py-1">
@@ -42,14 +56,42 @@ export function AnswerCard({
       </div>
 
       <div className="space-y-4">
-        {!response ? (
-          <div className="flex items-center gap-2 py-3 text-[#71717a] text-xs font-mono">
-            <span className="h-1.5 w-1.5 rounded-full bg-white/40 animate-pulse" />
-            <span>Searching archive...</span>
+        {!hasContent ? (
+          <div className="space-y-4 py-2">
+            <div className="flex items-center gap-2.5 text-xs text-[#a1a1aa] font-mono">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white/40 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-white/80" />
+              </span>
+              <span>{statusMessage || "Searching archive with hybrid vector search..."}</span>
+            </div>
+
+            <div className="space-y-2.5 pt-1 max-w-xl">
+              <div className="h-3.5 w-11/12 rounded bg-white/[0.06] animate-pulse" />
+              <div className="h-3.5 w-full rounded bg-white/[0.04] animate-pulse" />
+              <div className="h-3.5 w-4/5 rounded bg-white/[0.05] animate-pulse" />
+            </div>
           </div>
         ) : (
           <div className="space-y-3.5">
-            <ContradictionBanner contradictions={response.contradictions} />
+            {isStreaming && !response?.answer && (
+              <div className="space-y-4 py-2">
+                <div className="flex items-center gap-2.5 text-xs text-[#a1a1aa] font-mono">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white/40 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-white/80" />
+                  </span>
+                  <span>{statusMessage || "Synthesizing answer from archive sources..."}</span>
+                </div>
+
+                <div className="space-y-2.5 pt-1 max-w-xl">
+                  <div className="h-3.5 w-11/12 rounded bg-white/[0.06] animate-pulse" />
+                  <div className="h-3.5 w-full rounded bg-white/[0.04] animate-pulse" />
+                  <div className="h-3.5 w-4/5 rounded bg-white/[0.05] animate-pulse" />
+                </div>
+              </div>
+            )}
+            <ContradictionBanner contradictions={response?.contradictions || []} />
 
             <div className="text-[14.5px] leading-relaxed text-[#d4d4d8] space-y-3 font-sans">
               <ReactMarkdown
@@ -135,51 +177,59 @@ export function AnswerCard({
                           onSelectImage(src);
                         }
                       }}
-                      className="group my-3 block overflow-hidden rounded-xl border border-white/10 bg-[#161618] cursor-pointer hover:border-white/20 transition-colors"
+                      className="group my-3 block max-w-md mx-auto overflow-hidden rounded-xl border border-white/10 bg-[#141416] cursor-pointer hover:border-white/20 transition-colors shadow-lg"
                       title="Inspect plate"
                     >
                       {src && (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={src}
-                          alt={alt || "Archive Visual"}
-                          className="max-h-72 w-full object-contain block"
-                        />
+                        <div className="h-64 sm:h-72 w-full bg-black/30 flex items-center justify-center p-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt={alt || "Archive Visual"}
+                            className="max-h-full max-w-full object-contain block drop-shadow-md"
+                          />
+                        </div>
                       )}
-                      <span className="border-t border-white/5 bg-[#121214] px-3 py-1.5 flex items-center justify-between text-[11px] text-[#71717a]">
-                        <span>{alt || "Visual Evidence"}</span>
-                        <span className="text-[#a1a1aa]">Click to inspect</span>
+                      <span className="border-t border-white/5 bg-[#121214] px-3.5 py-2 flex items-center justify-between text-[11px] text-[#71717a]">
+                        <span className="font-medium text-white truncate max-w-[280px]">
+                          {alt || "Visual Evidence"}
+                        </span>
+                        <span className="text-[#a1a1aa] shrink-0">Click to inspect</span>
                       </span>
                     </span>
                   ),
                 }}
               >
-                {cleanWikilinks(response.answer)}
+                {response?.answer ? cleanWikilinks(response.answer) : ""}
               </ReactMarkdown>
+              {isStreaming && response?.answer && (
+                <span className="inline-block w-1.5 h-3.5 ml-1 bg-white/70 animate-pulse align-middle" />
+              )}
             </div>
 
-            {response.referenced_figures && response.referenced_figures.length > 0 && (
-              <div className="pt-2 border-t border-white/5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {response.referenced_figures.map((figureUrl, index) => (
+            {!isStreaming && standaloneFigures.length > 0 && (
+              <div className="pt-3 border-t border-white/5 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto">
+                  {standaloneFigures.map((figureUrl, index) => (
                     <button
                       key={index}
                       type="button"
                       onClick={() => onSelectImage && onSelectImage(figureUrl)}
-                      className="group flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#161618] hover:border-white/20 text-left cursor-pointer transition-colors"
+                      className="group flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#141416] hover:border-white/20 text-left cursor-pointer transition-colors shadow-lg"
                     >
-                      <div className="h-36 w-full bg-black/40 flex items-center justify-center p-2">
+                      <div className="h-44 w-full bg-black/30 flex items-center justify-center p-2">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={figureUrl}
                           alt={formatFigureCaption(figureUrl)}
-                          className="max-h-full max-w-full object-contain"
+                          className="max-h-full max-w-full object-contain block drop-shadow-md"
                         />
                       </div>
-                      <div className="border-t border-white/5 px-3 py-2 bg-[#121214]">
-                        <p className="text-[12px] font-medium text-white truncate">
+                      <div className="border-t border-white/5 px-3 py-2 bg-[#121214] flex items-center justify-between">
+                        <p className="text-[11.5px] font-medium text-white truncate">
                           {formatFigureCaption(figureUrl)}
                         </p>
+                        <span className="text-[10px] text-[#71717a]">Inspect</span>
                       </div>
                     </button>
                   ))}
@@ -188,7 +238,7 @@ export function AnswerCard({
             )}
 
             <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-              {response.citations && response.citations.length > 0 ? (
+              {response?.citations && response.citations.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[11px] text-[#71717a]">Sources:</span>
                   {response.citations.map((cite, index) => (
@@ -206,7 +256,7 @@ export function AnswerCard({
               ) : <div />}
 
               <div className="flex items-center gap-2">
-                {response.sources && response.sources.length > 0 && (
+                {response?.sources && response.sources.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setShowSources(!showSources)}
@@ -216,7 +266,7 @@ export function AnswerCard({
                   </button>
                 )}
 
-                {response.reasoning_steps && response.reasoning_steps.length > 0 && (
+                {response?.reasoning_steps && response.reasoning_steps.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setShowReasoning(!showReasoning)}
@@ -228,7 +278,7 @@ export function AnswerCard({
               </div>
             </div>
 
-            {showSources && response.sources && response.sources.length > 0 && (
+            {showSources && response?.sources && response.sources.length > 0 && (
               <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2.5 text-xs">
                 {response.sources.map((src, i) => (
                   <div
@@ -308,7 +358,7 @@ export function AnswerCard({
                           ),
                         }}
                       >
-                        {cleanWikilinks(src.snippet)}
+                        {cleanWikilinks(src.snippet.replace(/!\[.*?\]\(.*?\)/g, ""))}
                       </ReactMarkdown>
                     </div>
                   </div>
@@ -316,7 +366,7 @@ export function AnswerCard({
               </div>
             )}
 
-            {showReasoning && response.reasoning_steps && response.reasoning_steps.length > 0 && (
+            {showReasoning && response?.reasoning_steps && response.reasoning_steps.length > 0 && (
               <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2 text-xs">
                 {response.reasoning_steps.map((step) => (
                   <div key={step.step} className="flex items-start gap-2 text-[11.5px]">

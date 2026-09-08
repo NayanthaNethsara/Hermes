@@ -1,11 +1,13 @@
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.backend.agents.graphs.investigator_1c import build_investigator_1c_graph
 from src.backend.agents.graphs.multimodal_1a import build_multimodal_1a_graph
 from src.backend.agents.state.base import create_initial_state
+from src.backend.agents.stream import stream_agent_track
 
 router = APIRouter(tags=["agents"])
 
@@ -91,3 +93,31 @@ async def run_agent_track(
 async def ask_endpoint(payload: AskRequest) -> AgentRunResponse:
     request = AgentRunRequest(query=payload.question)
     return await run_agent_track(track_id="1a", payload=request)
+
+
+@router.post("/agents/stream/{track_id}")
+async def run_agent_stream_track(
+    track_id: str,
+    payload: AgentRunRequest,
+) -> StreamingResponse:
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(
+        stream_agent_track(
+            track_id=track_id,
+            query=payload.query,
+            max_iterations=payload.max_iterations,
+        ),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
+@router.post("/api/ask/stream")
+async def ask_stream_endpoint(payload: AskRequest) -> StreamingResponse:
+    request = AgentRunRequest(query=payload.question)
+    return await run_agent_stream_track(track_id="1a", payload=request)

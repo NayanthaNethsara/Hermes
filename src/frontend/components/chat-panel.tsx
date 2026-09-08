@@ -62,7 +62,12 @@ export function ChatPanel({
                 key={item.label}
                 type="button"
                 onClick={() => handleSubmit(item.query)}
-                className="h-7 px-3 rounded-full bg-white/5 hover:bg-white/10 text-xs text-[#a1a1aa] hover:text-white transition-colors cursor-pointer border border-white/5"
+                disabled={disabled}
+                className={`h-7 px-3 rounded-full bg-white/5 text-xs transition-colors border border-white/5 ${
+                  disabled
+                    ? "opacity-40 cursor-not-allowed text-[#71717a]"
+                    : "hover:bg-white/10 text-[#a1a1aa] hover:text-white cursor-pointer"
+                }`}
               >
                 {item.label}
               </button>
@@ -77,6 +82,8 @@ export function ChatPanel({
                 key={i}
                 question={turn.question}
                 response={turn.response}
+                statusMessage={turn.statusMessage}
+                isStreaming={turn.isStreaming}
                 onSelectDocument={onSelectDocument}
                 onSelectImage={onSelectImage}
               />

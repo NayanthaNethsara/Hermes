@@ -9,24 +9,23 @@ interface ChatSidebarProps {
   activeSessionId: string;
   isOpen: boolean;
   onClose: () => void;
-  onSelectSession: (sessionId: string) => void;
-  onNewChat: () => void;
   onDeleteSession: (sessionId: string) => void;
 }
 
-function formatRelativeTime(isoString: string | null): string {
-  if (!isoString) return "";
-  try {
-    const date = new Date(isoString);
-    const now = new Date();
-    const diffSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+function formatRelativeTime(isoDateString?: string | null): string {
+  if (!isoDateString) return "";
 
-    if (diffSeconds < 60) return "Just now";
-    const diffMinutes = Math.floor(diffSeconds / 60);
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
-    const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
+  try {
+    const date = new Date(isoDateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
     const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
 
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -40,8 +39,6 @@ export function ChatSidebar({
   activeSessionId,
   isOpen,
   onClose,
-  onSelectSession,
-  onNewChat,
   onDeleteSession,
 }: ChatSidebarProps) {
   if (!isOpen) return null;

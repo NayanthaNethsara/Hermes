@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import shutil
 from pathlib import Path
@@ -11,7 +12,6 @@ from src.backend.core.exceptions import DocumentParsingError
 from src.backend.core.logging import get_logger
 from src.backend.ingestion.schemas import (
     DocumentMetadata,
-    EpistemicWeight,
     ExtractedFigure,
     ExtractedTable,
     SourceCategory,
@@ -99,7 +99,6 @@ class DocumentParser:
         if self._visual_catalog is None:
             if self.catalog_path.exists():
                 try:
-                    import json
                     with open(self.catalog_path, "r", encoding="utf-8") as f:
                         self._visual_catalog = json.load(f)
                 except Exception:

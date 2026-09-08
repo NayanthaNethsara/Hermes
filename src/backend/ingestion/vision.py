@@ -1,13 +1,13 @@
 import base64
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 import google.auth
 from google.auth.transport.requests import Request
 import requests
 from pydantic import BaseModel, Field
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.backend.core.config import get_settings
 from src.backend.core.logging import get_logger
@@ -109,7 +109,6 @@ class VisionAnalyzer:
                     attempt=attempt,
                     retry_in_seconds=round(sleep_seconds, 1),
                 )
-                import time
                 time.sleep(sleep_seconds)
                 continue
             except requests.exceptions.RequestException as network_error:
@@ -121,7 +120,6 @@ class VisionAnalyzer:
                     error=str(network_error),
                     retry_in_seconds=round(sleep_seconds, 1),
                 )
-                import time
                 time.sleep(sleep_seconds)
                 continue
 
@@ -137,7 +135,6 @@ class VisionAnalyzer:
                     status=response.status_code,
                     retry_in_seconds=round(sleep_seconds, 1),
                 )
-                import time
                 time.sleep(sleep_seconds)
                 continue
 

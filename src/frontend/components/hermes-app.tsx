@@ -29,7 +29,7 @@ function generateSessionId(): string {
 export function HermesApp({ initialSessionId }: HermesAppProps) {
   const router = useRouter();
 
-  const [sessionId, setSessionId] = useState<string>(
+  const [sessionId] = useState<string>(
     () => initialSessionId || generateSessionId()
   );
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -47,12 +47,6 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
       router.replace(`/chat/${sessionId}`);
     }
   }, [initialSessionId, sessionId, router]);
-
-  useEffect(() => {
-    if (initialSessionId && initialSessionId !== sessionId) {
-      setSessionId(initialSessionId);
-    }
-  }, [initialSessionId]);
 
   useEffect(() => {
     if (!initialSessionId) return;
@@ -88,7 +82,15 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
   };
 
   useEffect(() => {
-    refreshSessions();
+    let cancelled = false;
+    fetchSessions().then((list) => {
+      if (!cancelled) {
+        setSessions(list);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSubmit = async (question: string) => {
@@ -218,11 +220,6 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
     router.push("/chat");
   };
 
-  const handleSelectSession = (targetSessionId: string) => {
-    if (targetSessionId === sessionId) return;
-    router.push(`/chat/${targetSessionId}`);
-  };
-
   const handleDeleteSession = async (targetSessionId: string) => {
     await deleteSession(targetSessionId);
     setSessions((prev) => prev.filter((s) => s.id !== targetSessionId));
@@ -274,8 +271,6 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
           activeSessionId={sessionId}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
-          onSelectSession={handleSelectSession}
-          onNewChat={handleReset}
           onDeleteSession={handleDeleteSession}
         />
         <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">

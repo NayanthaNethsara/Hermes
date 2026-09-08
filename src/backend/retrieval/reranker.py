@@ -1,8 +1,10 @@
+import asyncio
+
 import voyageai
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.backend.core.config import get_settings
-from src.backend.core.exceptions import ModelInferenceError, RetrievalThresholdError
+from src.backend.core.exceptions import ModelInferenceError
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.schemas import SearchResultChunk
 
@@ -44,7 +46,6 @@ class CrossEncoderReranker:
         document_texts = [candidate.content for candidate in candidates[:25]]
 
         try:
-            import asyncio
             result = await asyncio.to_thread(
                 self.client.rerank,
                 query=query,

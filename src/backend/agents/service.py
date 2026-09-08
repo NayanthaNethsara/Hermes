@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from src.backend.agents.graphs.workflow import get_compiled_graph
 from src.backend.agents.sessions import upsert_session
+from src.backend.core.config import get_settings
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.schemas import SearchResultChunk
 
@@ -74,6 +75,7 @@ class AgentService:
         initial_state = {
             "root_query": query,
             "session_id": session_id,
+            "max_iterations": min(max_iterations, get_settings().max_search_iterations),
             "messages": [HumanMessage(content=query)],
         }
         config = {"configurable": {"thread_id": session_id}}
@@ -115,6 +117,7 @@ class AgentService:
         initial_state = {
             "root_query": query,
             "session_id": session_id,
+            "max_iterations": min(max_iterations, get_settings().max_search_iterations),
             "messages": [HumanMessage(content=query)],
         }
         config = {"configurable": {"thread_id": session_id}}
@@ -138,7 +141,7 @@ class AgentService:
                 name = event.get("name", "")
 
                 if ev_type == "on_chain_start":
-                    if name in ["guardrail", "planner", "retriever", "arbitrator", "synthesizer"]:
+                    if name in ["guardrail", "planner", "retriever", "critic", "arbitrator", "synthesizer"]:
                         current_node = name
 
                     if name == "guardrail":
@@ -155,6 +158,11 @@ class AgentService:
                         yield format_sse_event("status", {
                             "stage": "retrieving",
                             "message": "Searching archive with hybrid vector search...",
+                        })
+                    elif name == "critic":
+                        yield format_sse_event("status", {
+                            "stage": "reviewing",
+                            "message": "Reviewing whether the evidence answers the question...",
                         })
                     elif name == "arbitrator":
                         yield format_sse_event("status", {

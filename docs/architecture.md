@@ -21,6 +21,7 @@ flowchart TD
             GR["Guardrail"]
             PL["Planner"]
             RT["Retriever"]
+            CR["Critic"]
             AR["Arbitrator"]
             SY["Synthesizer"]
         end
@@ -43,12 +44,15 @@ flowchart TD
 
     FE -->|"POST /api/ask/stream"| MW --> SVC --> GR
     GR -->|conversational| SY
-    GR -->|research query| PL --> RT --> AR --> SY
+    GR -->|research query| PL --> RT --> CR
+    CR -->|gap found, budget left| RT
+    CR -->|evidence sufficient| AR --> SY
 
     RT --> VY
     RT --> PG
     RT <--> RD
     PL --> GM
+    CR --> GM
     AR --> GM
     SY --> GM
 
@@ -65,10 +69,17 @@ flowchart LR
     GR -->|conversational| SY["Synthesizer"]
     GR -->|research query| PL["Planner"]
     PL --> RT["Retriever"]
-    RT --> AR["Arbitrator"]
+    RT --> CR["Critic"]
+    CR -->|"gap found, hops left"| RT
+    CR -->|"sufficient or budget spent"| AR["Arbitrator"]
     AR --> SY
     SY --> FIN(("end"))
 ```
+
+The retriever and critic form the search loop. The critic decides whether the
+evidence answers the question and, when it does not, supplies the queries for
+the next hop itself, so an extra hop costs one model call rather than a
+re-planning round trip.
 
 The graph is defined in `src/backend/agents/graphs/workflow.py` and compiled
 once per process with a PostgreSQL checkpointer, so conversation state survives
@@ -96,9 +107,42 @@ passes the query through without calling the model.
 runs a hybrid search in PostgreSQL, and reranks the candidates with a
 cross-encoder. Details in section 3.
 
+### Critic
+
+`agents/nodes/critic.py`. Receives the question, the searches already run, and
+a short digest of the evidence gathered so far, and returns
+`{is_sufficient, missing_information, next_queries}`.
+
+- **Sufficient** routes to the arbitrator and the answer is written.
+- **Insufficient** routes back to the retriever with `next_queries`, which the
+  critic phrases to target the named gap and to differ from searches already
+  run. The gap is kept in `knowledge_gap`.
+- **At the hop cap** the critic skips its model call entirely, since the route
+  out is forced regardless of what it would say.
+
+When the loop exits with a gap still open, `knowledge_gap` reaches the
+synthesizer, which states what it could not find instead of guessing.
+
+Hops are capped by `MAX_SEARCH_HOPS`, and the per-request `max_iterations` is
+clamped to it so a client cannot raise the ceiling. Counters reset in the
+guardrail on every turn, so a question starts its own investigation rather than
+inheriting the previous turn's hop count and evidence. Continuity between turns
+comes from the message history and the session summary, which the planner uses.
+
 ### Arbitrator
 
-`agents/nodes/arbitrator.py`. Sorts the retrieved chunks by authority weight and
+`agents/nodes/arbitrator.py`. Before arbitrating it consolidates the evidence:
+each hop can add up to `RERANK_TOP_K` passages per search query, so when the
+gathered total exceeds `SYNTHESIS_CONTEXT_LIMIT` the whole pool is reranked
+once against the original question and trimmed to that limit. Per-hop scores
+are not comparable — a hop-two passage was ranked against a narrower follow-up
+query — so this single pass puts everything on one scale. The threshold is
+disabled for it, because evidence the loop went looking for can legitimately
+score low against the original wording, and figures are narrowed to the
+passages that survive. The rerank is a Voyage call, so it adds no language
+model call; if it fails the pool is simply truncated.
+
+It then sorts the retrieved chunks by authority weight and
 then relevance. It calls the model only when the evidence actually spans
 different authority levels, that is when at least two distinct weights are
 present and the lowest is below 0.8. Otherwise no contradiction is possible
@@ -124,7 +168,8 @@ answer are mapped back to the assets served under `/assets`.
    `RETRIEVAL_CANDIDATE_LIMIT` candidates.
 4. The Voyage cross-encoder reranks those candidates. Anything below
    `RERANK_SCORE_THRESHOLD` is discarded and the top `RERANK_TOP_K` chunks move
-   forward.
+   forward. This runs per search query; evidence from multiple hops is
+   consolidated once later, in the arbitrator.
 5. The result is written back to Redis with `REDIS_CACHE_TTL_SECONDS`.
 
 Redis is treated as optional. If it is unavailable the retriever logs a warning
@@ -173,11 +218,15 @@ sequenceDiagram
     G-->>FE: status: planning
     G->>EXT: Rewrite query (follow-up turns only)
 
-    G-->>FE: status: retrieving
-    G->>RD: Cache lookup
-    G->>EXT: Embed query (on miss)
-    G->>PG: Hybrid search and rerank
-    G-->>FE: metadata: sources, figures, citations
+    loop Search hops, capped by MAX_SEARCH_HOPS
+        G-->>FE: status: retrieving
+        G->>RD: Cache lookup
+        G->>EXT: Embed query (on miss)
+        G->>PG: Hybrid search and rerank
+        G-->>FE: metadata: sources, figures, citations
+        G-->>FE: status: reviewing
+        G->>EXT: Sufficient? If not, what is missing (skipped at the cap)
+    end
 
     G-->>FE: status: arbitrating
     G->>EXT: Detect contradictions (mixed authority only)
@@ -194,16 +243,29 @@ sequenceDiagram
     FE-->>U: Answer, sources, reasoning trace
 ```
 
-Model calls per question:
+## 6. Model call budget
 
-| Question type | Nodes run | Model calls |
-|---|---|---|
-| Greeting | Guardrail, Synthesizer | 1 |
-| First research question | All five | 1 |
-| Follow-up, uniform authority | All five | 2 |
-| Follow-up, mixed authority | All five | 3 |
+Free-tier quotas are per minute, so the graph is built to a fixed ceiling. Only
+four nodes ever call a model, and three of them skip the call outright in
+common cases: the planner passes through on the first turn of a session, the
+arbitrator runs only on mixed authority, and the critic runs only below the hop
+cap. The guardrail and retriever never call one.
 
-## 6. Frontend
+| Question | planner | critic | arbitrator | synth | background | total |
+|---|---|---|---|---|---|---|
+| Greeting | 0 | 0 | 0 | 1 | 0-1 | 1-2 |
+| First question, 1 hop | 0 | 1 | 0-1 | 1 | 1 title | 3-4 |
+| Follow-up, 1 hop | 1 | 1 | 0-1 | 1 | 0-1 | 3-5 |
+| Follow-up, at hop cap | 1 | hops - 1 | 0-1 | 1 | 0-1 | see below |
+
+Background calls are the one-off session title on the first turn and the
+rolling summary refreshed on turns 3, 5, 7 and so on; never both in one turn.
+
+With `MAX_SEARCH_HOPS=2` the worst case is 5 calls per question. With
+`MAX_SEARCH_HOPS=3` it is 6. Raising the cap adds one call per hop, so tune it
+against the quota rather than for its own sake.
+
+## 7. Frontend
 
 Next.js App Router. `/` redirects to `/chat`, which generates a session id and
 replaces the URL with `/chat/<sessionId>`. Loading that URL directly fetches the
@@ -214,7 +276,7 @@ answer card renders Markdown, source cards with trust badges, embedded figures,
 and a collapsible trace of what each node did. The sidebar lists past sessions
 with relative timestamps and supports delete and new chat.
 
-## 7. Data model
+## 8. Data model
 
 Chunks live in the `document_chunks` table, one row per chunk:
 
@@ -239,7 +301,7 @@ first question, and a rolling summary used by the planner. LangGraph
 checkpoints are stored in their own tables in the same database, keyed by
 session id.
 
-## 8. Ingestion
+## 9. Ingestion
 
 `src/backend/workers/run_ingest.py` walks `RAW_ARCHIVE_DIR`, parses each
 document with Docling (PyMuPDF as fallback), crops figures and tables into
@@ -253,7 +315,7 @@ make ingest-wiki                               # one folder
 python -m src.backend.workers.run_ingest --folder images --limit 20
 ```
 
-## 9. Operational behaviour
+## 10. Operational behaviour
 
 - **Rate limiting.** `REDIS_RATE_LIMIT_REQUESTS` per `REDIS_RATE_LIMIT_WINDOW_SECONDS`
   per client IP, enforced by middleware. Fails open when Redis is down.
@@ -267,7 +329,7 @@ python -m src.backend.workers.run_ingest --folder images --limit 20
 - **Persistence.** Sessions and graph checkpoints are in PostgreSQL, so a
   restart does not lose conversation state.
 
-## 10. Tech stack
+## 11. Tech stack
 
 | Layer | Choice |
 |---|---|

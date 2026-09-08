@@ -23,7 +23,7 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
 
     if not queries_to_run:
         steps.append({
-            "step": 3,
+            "step": len(steps) + 1,
             "action": "Hybrid Archive Retrieval",
             "found": "No queries planned — 0 chunks retrieved",
         })
@@ -118,15 +118,21 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
     all_chunks = existing_chunks + new_chunks
     iteration = state.get("iteration_count", 0) + 1
     unique_figures = list(dict.fromkeys(collected_figures))
+    searched_queries = list(dict.fromkeys(list(state.get("searched_queries", [])) + queries_to_run))
 
-    top_doc_names = list(dict.fromkeys([c.doc_id for c in all_chunks]))[:4]
+    top_doc_names = list(dict.fromkeys([c.doc_id for c in new_chunks]))[:4]
     docs_summary = ", ".join(f"`{d}`" for d in top_doc_names) if top_doc_names else "none"
-    retrieval_detail = f"Found {len(all_chunks)} relevant passage(s) across [{docs_summary}]"
+    hop_label = f"Hop {iteration}: " if iteration > 1 else ""
+    retrieval_detail = (
+        f"{hop_label}searched {len(queries_to_run)} query(s), "
+        f"added {len(new_chunks)} new passage(s) from [{docs_summary}], "
+        f"{len(all_chunks)} total in evidence"
+    )
     if unique_figures:
-        retrieval_detail += f" and linked {len(unique_figures)} visual figure(s)"
+        retrieval_detail += f", {len(unique_figures)} visual figure(s) linked"
 
     steps.append({
-        "step": 3,
+        "step": len(steps) + 1,
         "action": "Hybrid Archive Retrieval",
         "found": retrieval_detail,
     })
@@ -138,5 +144,6 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
         "figures": unique_figures,
         "figure_urls": unique_figures,
         "iteration_count": iteration,
+        "searched_queries": searched_queries,
         "reasoning_steps": steps,
     }

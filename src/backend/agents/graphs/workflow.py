@@ -5,11 +5,13 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 
 from src.backend.agents.nodes.arbitrator import arbitrate_evidence
+from src.backend.agents.nodes.critic import assess_sufficiency
 from src.backend.agents.nodes.guardrail import guardrail_input
 from src.backend.agents.nodes.planner import plan_search_queries
 from src.backend.agents.nodes.retriever import retrieve_evidence
 from src.backend.agents.nodes.synthesizer import synthesize_answer
 from src.backend.agents.state.models import ConversationalInvestigatorState
+from src.backend.core.config import get_settings
 from src.backend.core.database import get_connection_pool
 from src.backend.core.logging import get_logger
 
@@ -25,6 +27,7 @@ def build_unified_graph(checkpointer=None):
     workflow.add_node("guardrail", guardrail_input)
     workflow.add_node("planner", plan_search_queries)
     workflow.add_node("retriever", retrieve_evidence)
+    workflow.add_node("critic", assess_sufficiency)
     workflow.add_node("arbitrator", arbitrate_evidence)
     workflow.add_node("synthesizer", synthesize_answer)
 
@@ -33,10 +36,21 @@ def build_unified_graph(checkpointer=None):
             return "synthesizer"
         return "planner"
 
+    def route_after_critic(state: ConversationalInvestigatorState) -> str:
+        if state.get("is_sufficient"):
+            return "arbitrator"
+        max_hops = state.get("max_iterations") or get_settings().max_search_iterations
+        if state.get("iteration_count", 0) >= max_hops:
+            return "arbitrator"
+        if not state.get("planned_queries"):
+            return "arbitrator"
+        return "retriever"
+
     workflow.add_edge(START, "guardrail")
     workflow.add_conditional_edges("guardrail", route_after_guardrail, ["planner", "synthesizer"])
     workflow.add_edge("planner", "retriever")
-    workflow.add_edge("retriever", "arbitrator")
+    workflow.add_edge("retriever", "critic")
+    workflow.add_conditional_edges("critic", route_after_critic, ["retriever", "arbitrator"])
     workflow.add_edge("arbitrator", "synthesizer")
     workflow.add_edge("synthesizer", END)
 

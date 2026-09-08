@@ -14,8 +14,10 @@ disagree rather than a silently chosen winner.
 A question runs through a LangGraph pipeline with conditional routing:
 
 ```
-User -> Guardrail -> Planner -> Retriever -> Arbitrator -> Synthesizer -> User
-             \_______ (greeting) ______________________________/
+                                +---- gap found -----+
+                                v                    |
+User -> Guardrail -> Planner -> Retriever -> Critic -+-> Arbitrator -> Synthesizer -> User
+        \__________________________ greeting __________________________/
 ```
 
 | Node | Responsibility |
@@ -23,10 +25,15 @@ User -> Guardrail -> Planner -> Retriever -> Arbitrator -> Synthesizer -> User
 | Guardrail | Regex intent check; greetings skip retrieval entirely |
 | Planner | Rewrites follow-up questions into standalone queries using dialogue history |
 | Retriever | Hybrid pgvector and full-text search fused with RRF, cross-encoder rerank, Redis cache |
+| Critic | Judges whether the evidence answers the question; names the gap and the next searches when it does not |
 | Arbitrator | Sorts evidence by authority and detects factual contradictions |
 | Synthesizer | Streams a sourced Markdown answer over SSE |
 
-See [docs/architecture.md](docs/architecture.md) for the full design.
+The retriever and critic form a search loop: the agent reads what it found,
+decides what is still missing, and searches again, up to `MAX_SEARCH_HOPS`.
+When the budget runs out with a gap still open, the answer says so rather than
+guessing. Model calls per question are capped by design — see the budget table
+in [docs/architecture.md](docs/architecture.md#6-model-call-budget).
 
 ## Quick start
 

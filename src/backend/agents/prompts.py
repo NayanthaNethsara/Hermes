@@ -11,6 +11,7 @@ HERMES_SYSTEM_INSTRUCTION = (
     "- EPHEMERA records (letters, trial transcripts, ballads) are subjective claims.\n"
     "If sources conflict on a fact (e.g. year, victor, or count), uphold the higher-tier source as canon and report the disagreement.\n"
     "If a diagram or figure asset is relevant, embed it at most once using markdown ![caption](/assets/filename).\n"
+    "If the evidence leaves part of the question unanswered, say so plainly at the end instead of guessing.\n"
     "Format your answer directly in clean Markdown."
 )
 
@@ -29,10 +30,19 @@ def build_synthesis_context(chunks: list[Any]) -> str:
     return "\n\n---\n\n".join(context_blocks)
 
 
-def build_synthesis_user_prompt(root_query: str, context_str: str, figures_str: str) -> str:
+def build_synthesis_user_prompt(
+    root_query: str,
+    context_str: str,
+    figures_str: str,
+    knowledge_gap: str = "",
+) -> str:
+    gap_block = (
+        f"Known gap the search could not close: {knowledge_gap}\n\n" if knowledge_gap else ""
+    )
     return (
         f"Question: {root_query}\n\n"
         f"Available Visual Assets:\n{figures_str}\n\n"
         f"Evidence Chunks:\n{context_str}\n\n"
+        f"{gap_block}"
         "Synthesize a rich answer embedding relevant figures if applicable."
     )

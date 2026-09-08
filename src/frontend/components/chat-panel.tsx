@@ -7,24 +7,49 @@ import { ChatInputBar } from "@/components/chat-input-bar";
 
 import { APP_DESCRIPTION, APP_NAME, SUGGESTED_QUERIES } from "@/lib/constants";
 
+const PIN_TO_BOTTOM_THRESHOLD_PX = 100;
+
 export function ChatPanel({
   turns,
   onSubmit,
+  onStop,
   disabled,
   onSelectDocument,
   onSelectImage,
 }: {
   turns: ChatTurn[];
   onSubmit: (text: string) => void;
+  onStop?: () => void;
   disabled?: boolean;
   onSelectDocument?: (docId: string) => void;
   onSelectImage?: (imagePath: string) => void;
 }) {
   const [inputValue, setInputValue] = useState("");
-  const scrollEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isPinnedToBottom = useRef(true);
+  const previousTurnCount = useRef(turns.length);
+
+  const handleScroll = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    isPinnedToBottom.current = distanceFromBottom < PIN_TO_BOTTOM_THRESHOLD_PX;
+  };
 
   useEffect(() => {
-    scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const isNewTurn = turns.length !== previousTurnCount.current;
+    previousTurnCount.current = turns.length;
+
+    if (!isPinnedToBottom.current) return;
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: isNewTurn ? "smooth" : "auto",
+    });
   }, [turns]);
 
   const handleSubmit = (text: string) => {
@@ -52,6 +77,7 @@ export function ChatPanel({
               value={inputValue}
               onChange={setInputValue}
               onSubmit={handleSubmit}
+              onStop={onStop}
               disabled={disabled}
             />
           </div>
@@ -75,7 +101,11 @@ export function ChatPanel({
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 flex flex-col">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 flex flex-col"
+        >
           <div className="w-full max-w-2xl mx-auto space-y-8 flex-1">
             {turns.map((turn, i) => (
               <AnswerCard
@@ -88,7 +118,6 @@ export function ChatPanel({
                 onSelectImage={onSelectImage}
               />
             ))}
-            <div ref={scrollEndRef} />
           </div>
 
           <div className="sticky bottom-0 pt-3 pb-4 bg-gradient-to-t from-[#0d0d0f] via-[#0d0d0f]/90 to-transparent backdrop-blur-xs mt-4">
@@ -96,6 +125,7 @@ export function ChatPanel({
               value={inputValue}
               onChange={setInputValue}
               onSubmit={handleSubmit}
+              onStop={onStop}
               disabled={disabled}
             />
           </div>

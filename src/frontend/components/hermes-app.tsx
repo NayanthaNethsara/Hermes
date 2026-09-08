@@ -9,6 +9,7 @@ import {
   fetchSessionDetails,
   fetchSessions,
   HermesApiError,
+  isAbortError,
 } from "@/lib/api";
 import { ChatPanel } from "@/components/chat-panel";
 import { ChatSidebar } from "@/components/chat-sidebar";
@@ -20,10 +21,78 @@ interface HermesAppProps {
   initialSessionId?: string;
 }
 
+interface PendingDeletion {
+  session: SessionSummary;
+  wasActive: boolean;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 function generateSessionId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : `session_${Date.now()}`;
+}
+
+function sortSessionsByUpdatedAt(sessions: SessionSummary[]): SessionSummary[] {
+  return [...sessions].sort((a, b) => {
+    const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    return bTime - aTime;
+  });
+}
+
+function DeleteSessionDialog({
+  session,
+  onCancel,
+  onConfirm,
+}: {
+  session: SessionSummary | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!session) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={onCancel}
+        aria-hidden="true"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-session-title"
+        className="relative z-10 w-full max-w-sm rounded-xl border border-white/10 bg-[#18181b] p-5 shadow-2xl"
+      >
+        <div className="space-y-2">
+          <h2 id="delete-session-title" className="text-sm font-medium text-white">
+            Delete this chat?
+          </h2>
+          <p className="text-xs leading-relaxed text-[#a1a1aa]">
+            This will remove &quot;{session.title}&quot; from your chat history.
+          </p>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[#d4d4d8] hover:bg-white/10 hover:text-white transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-md border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-500/25 transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function HermesApp({ initialSessionId }: HermesAppProps) {
@@ -38,8 +107,18 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
   const [isThinking, setIsThinking] = useState(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [selectedImagePath, setSelectedImagePath] = useState<string | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(null);
+  const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(null);
 
   const hasRedirected = useRef(false);
+  const pendingDeletionId = useRef<string | null>(null);
+  const activeStreamController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      activeStreamController.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (!initialSessionId && !hasRedirected.current) {
@@ -78,7 +157,11 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
 
   const refreshSessions = async () => {
     const list = await fetchSessions();
-    setSessions(list);
+    setSessions(
+      pendingDeletionId.current
+        ? list.filter((session) => session.id !== pendingDeletionId.current)
+        : list
+    );
   };
 
   useEffect(() => {
@@ -94,6 +177,12 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
   }, []);
 
   const handleSubmit = async (question: string) => {
+    if (isThinking) return;
+
+    activeStreamController.current?.abort();
+    const controller = new AbortController();
+    activeStreamController.current = controller;
+
     const initialStatus = "Searching archive with hybrid vector search...";
 
     setTurns((prev) => [
@@ -187,8 +276,37 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
             return next;
           });
         },
-      }, sessionId);
+      }, sessionId, controller.signal);
     } catch (error) {
+      if (isAbortError(error)) {
+        setTurns((prev) => {
+          if (prev.length === 0) return prev;
+          const next = [...prev];
+          const lastIndex = next.length - 1;
+          const currentTurn = next[lastIndex];
+          const previousResponse = currentTurn.response;
+          const stoppedAnswer = previousResponse?.answer
+            ? `${previousResponse.answer}\n\n_Response stopped._`
+            : "Response stopped.";
+
+          next[lastIndex] = {
+            ...currentTurn,
+            isStreaming: false,
+            statusMessage: undefined,
+            response: {
+              answer: stoppedAnswer,
+              reasoning_steps: previousResponse?.reasoning_steps || [],
+              sources: previousResponse?.sources || [],
+              contradictions: previousResponse?.contradictions || [],
+              referenced_figures: previousResponse?.referenced_figures || [],
+              citations: previousResponse?.citations || [],
+            },
+          };
+          return next;
+        });
+        return;
+      }
+
       const message =
         error instanceof HermesApiError
           ? error.message
@@ -211,21 +329,80 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
         return next;
       });
     } finally {
+      if (activeStreamController.current === controller) {
+        activeStreamController.current = null;
+      }
       setIsThinking(false);
       refreshSessions();
     }
+  };
+
+  const handleStopResponse = () => {
+    activeStreamController.current?.abort();
   };
 
   const handleReset = () => {
     router.push("/chat");
   };
 
-  const handleDeleteSession = async (targetSessionId: string) => {
-    await deleteSession(targetSessionId);
-    setSessions((prev) => prev.filter((s) => s.id !== targetSessionId));
-    if (sessionId === targetSessionId) {
+  const handleDeleteSession = (targetSessionId: string) => {
+    const target = sessions.find((session) => session.id === targetSessionId);
+    if (target) {
+      setDeleteCandidate(target);
+    }
+  };
+
+  const confirmDeleteSession = () => {
+    if (!deleteCandidate) return;
+
+    const target = deleteCandidate;
+    const wasActive = sessionId === target.id;
+
+    setDeleteCandidate(null);
+    setSessions((prev) => prev.filter((s) => s.id !== target.id));
+
+    if (wasActive) {
       router.push("/chat");
     }
+
+    if (pendingDeletion) {
+      clearTimeout(pendingDeletion.timer);
+      void deleteSession(pendingDeletion.session.id);
+    }
+
+    pendingDeletionId.current = target.id;
+
+    const timer = setTimeout(() => {
+      void deleteSession(target.id).then(() => {
+        setPendingDeletion((current) =>
+          current?.session.id === target.id ? null : current
+        );
+        if (pendingDeletionId.current === target.id) {
+          pendingDeletionId.current = null;
+        }
+      });
+    }, 5000);
+
+    setPendingDeletion({ session: target, wasActive, timer });
+  };
+
+  const undoDeleteSession = () => {
+    if (!pendingDeletion) return;
+
+    clearTimeout(pendingDeletion.timer);
+    pendingDeletionId.current = null;
+    setSessions((prev) => {
+      if (prev.some((session) => session.id === pendingDeletion.session.id)) {
+        return prev;
+      }
+      return sortSessionsByUpdatedAt([pendingDeletion.session, ...prev]);
+    });
+
+    if (pendingDeletion.wasActive) {
+      router.push(`/chat/${encodeURIComponent(pendingDeletion.session.id)}`);
+    }
+
+    setPendingDeletion(null);
   };
 
   return (
@@ -277,6 +454,7 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
           <ChatPanel
             turns={turns}
             onSubmit={handleSubmit}
+            onStop={handleStopResponse}
             disabled={isThinking}
             onSelectDocument={(docId) => setSelectedDocId(docId)}
             onSelectImage={(img) => setSelectedImagePath(img)}
@@ -294,6 +472,27 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
         imagePath={selectedImagePath}
         onClose={() => setSelectedImagePath(null)}
       />
+
+      <DeleteSessionDialog
+        session={deleteCandidate}
+        onCancel={() => setDeleteCandidate(null)}
+        onConfirm={confirmDeleteSession}
+      />
+
+      {pendingDeletion && (
+        <div className="fixed bottom-4 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#18181b] px-4 py-3 text-xs text-[#d4d4d8] shadow-2xl sm:left-auto sm:right-4 sm:translate-x-0">
+          <span className="min-w-0 truncate">
+            Deleted &quot;{pendingDeletion.session.title}&quot;
+          </span>
+          <button
+            type="button"
+            onClick={undoDeleteSession}
+            className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 font-medium text-white hover:bg-white/10 transition-colors"
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   );
 }

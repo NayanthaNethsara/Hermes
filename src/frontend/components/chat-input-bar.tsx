@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useRef, useEffect } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Square } from "lucide-react";
 import type { ChatInputBarProps } from "@/types/hermes";
 
 export function ChatInputBar({
   value,
   onChange,
   onSubmit,
+  onStop,
   disabled = false,
   placeholder = "Ask Hermes anything about the archive...",
   className = "",
@@ -66,13 +67,26 @@ export function ChatInputBar({
 
         <div className="flex items-center justify-end pt-2 px-1 border-t border-white/5 mt-2">
           {disabled ? (
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 text-[#a1a1aa] text-[11px] font-mono cursor-not-allowed border border-white/5 select-none"
-              title="Hermes is generating a response..."
-            >
-              <Loader2 size={12} className="animate-spin text-white/70" />
-              <span>Thinking...</span>
-            </div>
+            onStop ? (
+              <button
+                type="button"
+                onClick={onStop}
+                aria-label="Stop response"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 text-[#a1a1aa] text-[11px] font-mono border border-white/5 hover:bg-red-500/10 hover:text-red-200 hover:border-red-500/20 transition-colors"
+                title="Stop generating this response"
+              >
+                <Square size={10} className="fill-current" />
+                <span>Stop</span>
+              </button>
+            ) : (
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 text-[#a1a1aa] text-[11px] font-mono cursor-not-allowed border border-white/5 select-none"
+                title="Hermes is generating a response..."
+              >
+                <Loader2 size={12} className="animate-spin text-white/70" />
+                <span>Thinking...</span>
+              </div>
+            )
           ) : (
             <button
               type="submit"

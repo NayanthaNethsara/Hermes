@@ -14,6 +14,16 @@ export const API_ENDPOINTS = {
   DOCUMENTS: "/api/documents",
   VISUALS: "/api/visuals",
   SESSIONS: "/api/sessions",
+  SEARCH: "/retrieval/search",
+} as const;
+
+export const LIBRARY_SEED_QUERY =
+  "archive record chronicle codex plate wiki ephemera";
+
+export const LIBRARY_SEARCH_LIMITS = {
+  TOP_K: 60,
+  RERANK_TOP_K: 24,
+  MIN_SCORE: 0,
 } as const;
 
 export const QUERY_CONSTRAINTS = {

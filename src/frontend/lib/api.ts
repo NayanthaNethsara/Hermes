@@ -10,13 +10,21 @@ import type {
   StreamDonePayload,
   SessionSummary,
   SessionDetails,
+  SearchResponse,
+  SearchResultChunk,
+  ArchiveDocument,
 } from "@/types/hermes";
 import {
   AskQuerySchema,
+  ArchiveSearchSchema,
   DocumentIdSchema,
   VisualFilenameSchema,
 } from "@/lib/validation";
-import { API_BASE_URL, API_ENDPOINTS } from "@/lib/constants";
+import {
+  API_BASE_URL,
+  API_ENDPOINTS,
+  LIBRARY_SEARCH_LIMITS,
+} from "@/lib/constants";
 export class HermesApiError extends Error {}
 
 
@@ -256,6 +264,86 @@ export async function fetchVisualDetails(filename: string): Promise<VisualCatalo
   }
 
   return response.json();
+}
+
+export async function searchArchive(
+  query: string,
+  signal?: AbortSignal
+): Promise<SearchResponse> {
+  const validated = ArchiveSearchSchema.parse({ query });
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.SEARCH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: validated.query,
+        top_k: LIBRARY_SEARCH_LIMITS.TOP_K,
+        rerank_top_k: LIBRARY_SEARCH_LIMITS.RERANK_TOP_K,
+        min_score: LIBRARY_SEARCH_LIMITS.MIN_SCORE,
+      }),
+      signal,
+    });
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    throw new HermesApiError(
+      `Could not reach the backend. Is it running at ${API_BASE_URL}?`
+    );
+  }
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new HermesApiError(
+      describeErrorBody(data, `Search failed with status ${response.status}`)
+    );
+  }
+
+  return response.json();
+}
+
+export function groupChunksIntoDocuments(
+  chunks: SearchResultChunk[]
+): ArchiveDocument[] {
+  const documents = new Map<string, ArchiveDocument>();
+
+  for (const chunk of chunks) {
+    const metadata = chunk.metadata_payload || {};
+    const existing = documents.get(chunk.doc_id);
+
+    if (!existing) {
+      documents.set(chunk.doc_id, {
+        doc_id: chunk.doc_id,
+        category: String(metadata.source_category || "unknown"),
+        epistemic_weight:
+          typeof metadata.epistemic_weight === "number"
+            ? metadata.epistemic_weight
+            : null,
+        section:
+          typeof metadata.section_title === "string"
+            ? metadata.section_title
+            : null,
+        excerpt: chunk.content,
+        figures: [...chunk.figure_references],
+        chunk_count: 1,
+        best_relevance: chunk.relevance_score,
+      });
+      continue;
+    }
+
+    existing.chunk_count += 1;
+    for (const figure of chunk.figure_references) {
+      if (!existing.figures.includes(figure)) existing.figures.push(figure);
+    }
+    if (chunk.relevance_score > existing.best_relevance) {
+      existing.best_relevance = chunk.relevance_score;
+      existing.excerpt = chunk.content;
+    }
+  }
+
+  return [...documents.values()].sort(
+    (a, b) => b.best_relevance - a.best_relevance
+  );
 }
 
 export async function fetchSessions(): Promise<SessionSummary[]> {

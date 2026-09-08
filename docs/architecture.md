@@ -95,11 +95,12 @@ arbitration.
 
 ### Planner
 
-`agents/nodes/planner.py`. Rewrites the latest question into a standalone
-retrieval query by resolving pronouns against the last few dialogue turns plus
-the rolling session summary. Outputs `rewritten_query` and one or two
-`search_terms`. On the first turn there is no history to resolve, so the node
-passes the query through without calling the model.
+`agents/nodes/planner.py`. Analyzes question structure and resolves references
+against prior dialogue history and rolling session summaries. For compositional
+or multi-hop questions (e.g., questions requiring pivot entities such as an
+individual's faction or an artifact's former keeper), it identifies the primary
+entity to investigate first and outputs 1-2 targeted search queries optimized
+for hybrid dense and full-text retrieval.
 
 ### Retriever
 
@@ -127,7 +128,12 @@ rather than implying the search simply stopped early.
 The critic judges substance, not wording. A passage describing what a plate
 depicts answers a question about what that plate shows, even when it never uses
 the asker's term. Without that rule the critic litigates synonyms and spends
-hops confirming phrasing it already has.
+hops confirming phrasing it already has. Furthermore, when a query asks for a
+specific factual attribute (e.g. founding date, count, or ruler) and the
+gathered evidence already contains direct records for that entity—even if those
+records present conflicting claims—the verdict is `answered`. The critic hands
+off conflicting evidence directly to the arbitrator rather than initiating
+unnecessary search hops to resolve the discrepancy.
 
 **What the critic can see matters more than the prompt.** It reads a digest,
 not the full evidence, and the digest strips ingestion boilerplate — asset
@@ -183,8 +189,10 @@ titled "Gauntlet of the Serpent" and a wiki article named
 `gauntlet_of_sorrowfell` get reported as a disagreement about the artifact's
 official name. Identifiers, slugs and plate titles are cataloguing labels
 rather than claims, and the prompt now says so explicitly, alongside the other
-non-contradictions: silence, differing detail, different subjects, and
-synonyms.
+non-contradictions: silence (absence of maker marks does not contradict motif
+engravings), narrative descriptions differing from official visual plates (the
+plate is authoritative on what it depicts), differing detail, different
+subjects, and synonyms.
 
 It then sorts the retrieved chunks by authority weight and
 then relevance. It calls the model only when the evidence actually spans
@@ -206,6 +214,8 @@ text, a description of what it depicts, and the recorded key-value data. The
 model decides from that which figures carry evidence for what it asserts, and
 embeds those and only those, with a caption written for the reader. The
 caption matters: the interface renders it as the visible label under the plate.
+Post-processing via `strip_caption_echo` cleans up any duplicate caption
+sentences immediately below embedded figures.
 
 `referenced_figures` is then derived from what the answer actually embedded,
 matched by filename or `/assets/` URL. When the model embeds nothing, the list
@@ -387,9 +397,12 @@ python -m src.backend.workers.run_ingest --folder images --limit 20
   nodes do not re-initialize a client on every invocation.
 - **Provider fallback.** Gemini is used when `GCP_PROJECT_ID` or a Gemini API
   key is present, otherwise OpenRouter if configured, otherwise a stub model
-  that returns a configuration message instead of failing at import time.
+  that returns a configuration message instead of failing at import time. Both
+  fallback providers implement native asynchronous generation (`_agenerate`)
+  via `httpx.AsyncClient` to ensure non-blocking graph streaming.
 - **Persistence.** Sessions and graph checkpoints are in PostgreSQL, so a
-  restart does not lose conversation state.
+  restart does not lose conversation state. MemorySaver acts as an automatic
+  in-memory fallback when database connections are transiently unavailable.
 
 ## 11. Tech stack
 

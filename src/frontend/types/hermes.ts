@@ -115,6 +115,7 @@ export interface ChatInputBarProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
+  onStop?: () => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;

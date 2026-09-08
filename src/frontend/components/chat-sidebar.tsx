@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { MessageSquare, Plus, Trash2, X } from "lucide-react";
+import { Check, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import type { SessionSummary } from "@/types/hermes";
 
 interface ChatSidebarProps {
@@ -41,6 +42,8 @@ export function ChatSidebar({
   onClose,
   onDeleteSession,
 }: ChatSidebarProps) {
+  const [confirmingSessionId, setConfirmingSessionId] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   return (
@@ -85,39 +88,61 @@ export function ChatSidebar({
             sessions.map((session) => {
               const isActive = session.id === activeSessionId;
               return (
-                <Link
+                <div
                   key={session.id}
-                  href={`/chat/${session.id}`}
-                  onClick={onClose}
-                  className={`group relative flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors ${
+                  className={`group flex items-center gap-2 pr-2 rounded-lg text-xs transition-colors ${
                     isActive
                       ? "bg-white/10 text-white font-medium"
                       : "text-[#a1a1aa] hover:bg-white/5 hover:text-[#ededed]"
                   }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <Link
+                    href={`/chat/${encodeURIComponent(session.id)}`}
+                    onClick={onClose}
+                    className="flex items-center gap-2 min-w-0 flex-1 pl-2.5 py-2 cursor-pointer"
+                  >
                     <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[#71717a]" />
                     <span className="truncate">{session.title}</span>
-                  </div>
+                  </Link>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px] text-[#71717a] group-hover:hidden">
-                      {formatRelativeTime(session.updated_at)}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Delete chat"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDeleteSession(session.id);
-                      }}
-                      className="hidden group-hover:flex items-center justify-center p-1 rounded hover:bg-red-500/20 text-[#71717a] hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                </Link>
+                  {confirmingSessionId === session.id ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        aria-label="Confirm delete chat"
+                        onClick={() => {
+                          setConfirmingSessionId(null);
+                          onDeleteSession(session.id);
+                        }}
+                        className="flex h-5 w-5 items-center justify-center rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 hover:text-red-200 transition-colors"
+                      >
+                        <Check className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel delete chat"
+                        onClick={() => setConfirmingSessionId(null)}
+                        className="flex h-5 w-5 items-center justify-center rounded bg-white/5 text-[#a1a1aa] hover:bg-white/10 hover:text-white transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] text-[#71717a] group-hover:hidden group-focus-within:hidden">
+                        {formatRelativeTime(session.updated_at)}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Delete chat"
+                        onClick={() => setConfirmingSessionId(session.id)}
+                        className="hidden group-hover:flex group-focus-within:flex items-center justify-center p-1 rounded hover:bg-red-500/20 text-[#71717a] hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             })
           )}

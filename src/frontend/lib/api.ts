@@ -20,6 +20,19 @@ import { API_BASE_URL, API_ENDPOINTS } from "@/lib/constants";
 export class HermesApiError extends Error {}
 
 
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function describeErrorBody(body: unknown, fallback: string): string {
+  if (body && typeof body === "object") {
+    const { message, error } = body as { message?: unknown; error?: unknown };
+    if (typeof message === "string" && message.trim()) return message;
+    if (typeof error === "string" && error.trim()) return error;
+  }
+  return fallback;
+}
+
 export interface StreamHandlers {
   onStatus?: (status: StreamStatusPayload) => void;
   onMetadata?: (metadata: StreamMetadataPayload) => void;
@@ -53,11 +66,9 @@ export async function askHermes(
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const message =
-      data && typeof data.error === "string"
-        ? data.error
-        : `Request failed with status ${response.status}`;
-    throw new HermesApiError(message);
+    throw new HermesApiError(
+      describeErrorBody(data, `Request failed with status ${response.status}`)
+    );
   }
 
   return data as HermesResponse;
@@ -83,6 +94,10 @@ export async function askHermesStream(
       signal,
     });
   } catch (err: unknown) {
+    if (isAbortError(err)) {
+      throw err;
+    }
+
     const message = err instanceof Error ? err.message : "Network error";
     throw new HermesApiError(
       `Could not reach the backend. Is it running at ${API_BASE_URL}? (${message})`
@@ -91,11 +106,9 @@ export async function askHermesStream(
 
   if (!response.ok) {
     const data = await response.json().catch(() => null);
-    const message =
-      data && typeof data.error === "string"
-        ? data.error
-        : `Request failed with status ${response.status}`;
-    throw new HermesApiError(message);
+    throw new HermesApiError(
+      describeErrorBody(data, `Request failed with status ${response.status}`)
+    );
   }
 
   if (!response.body) {
@@ -215,7 +228,10 @@ export async function fetchDocumentDetails(docId: string): Promise<DocumentDetai
   }
 
   if (!response.ok) {
-    throw new HermesApiError(`Document '${validatedId}' could not be loaded.`);
+    const data = await response.json().catch(() => null);
+    throw new HermesApiError(
+      describeErrorBody(data, `Document '${validatedId}' could not be loaded.`)
+    );
   }
 
   return response.json();
@@ -233,7 +249,10 @@ export async function fetchVisualDetails(filename: string): Promise<VisualCatalo
   }
 
   if (!response.ok) {
-    throw new HermesApiError(`Visual asset '${validatedName}' could not be loaded.`);
+    const data = await response.json().catch(() => null);
+    throw new HermesApiError(
+      describeErrorBody(data, `Visual asset '${validatedName}' could not be loaded.`)
+    );
   }
 
   return response.json();

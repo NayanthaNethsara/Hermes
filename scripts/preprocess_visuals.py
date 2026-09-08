@@ -45,7 +45,15 @@ async def preprocess_visual_archive(limit: int | None = None) -> None:
 
     logger.info("visual_images_discovered", count=len(images_list))
 
+    catalog_path = assets_dir / "visual_catalog.json"
     catalog: dict[str, dict] = {}
+    if catalog_path.exists():
+        try:
+            with open(catalog_path, "r", encoding="utf-8") as f:
+                catalog = json.load(f)
+        except Exception:
+            catalog = {}
+
     processed_count = 0
 
     for index, image_path in enumerate(images_list, 1):
@@ -54,7 +62,6 @@ async def preprocess_visual_archive(limit: int | None = None) -> None:
         asset_filename = image_path.name
         asset_rel_path = f"/assets/{asset_filename}"
 
-        # Copy to extracted assets if not present
         destination_path = assets_dir / asset_filename
         if not destination_path.exists():
             import shutil
@@ -63,7 +70,7 @@ async def preprocess_visual_archive(limit: int | None = None) -> None:
         async with session_scope() as session:
             store = PostgresVectorStore(session)
             already_processed = await store.has_document(file_hash)
-            if already_processed:
+            if already_processed and asset_filename in catalog:
                 logger.info(
                     "image_already_indexed_skipping",
                     file=asset_filename,
@@ -89,9 +96,9 @@ async def preprocess_visual_archive(limit: int | None = None) -> None:
             "visual_description": analysis.visual_description,
             "attributes": analysis.attributes,
             "asset_path": asset_rel_path,
+            "rich_content": analysis.rich_content,
         }
 
-        # Embed the rich textual visual intelligence
         embedding = (await embedder.embed_texts([analysis.rich_content]))[0]
 
         async with session_scope() as session:
@@ -125,16 +132,16 @@ async def preprocess_visual_archive(limit: int | None = None) -> None:
                 "metadata_payload": payload,
             }])
 
+        with open(catalog_path, "w", encoding="utf-8") as f:
+            json.dump(catalog, f, indent=2, ensure_ascii=False)
+
         processed_count += 1
         logger.info(
             "visual_asset_indexed_successfully",
             file=asset_filename,
             title=analysis.title,
         )
-
-    catalog_path = assets_dir / "visual_catalog.json"
-    with open(catalog_path, "w", encoding="utf-8") as f:
-        json.dump(catalog, f, indent=2, ensure_ascii=False)
+        await asyncio.sleep(4.0)
 
     logger.info("visual_preprocessing_completed", newly_indexed=processed_count, catalog_path=str(catalog_path))
 

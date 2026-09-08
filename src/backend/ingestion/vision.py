@@ -38,11 +38,6 @@ class VisionAnalyzer:
             self._credentials.refresh(Request())
         return self._credentials.token
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1.5, min=2, max=10),
-        reraise=True,
-    )
     def analyze_image(self, image_path: Path) -> VisionAnalysisResult:
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -91,19 +86,65 @@ class VisionAnalyzer:
             }
         }
 
-        response = requests.post(
-            api_endpoint,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            },
-            json=request_payload,
-            timeout=30,
-        )
+        max_attempts = 5
+        base_delay = 8.0
 
-        if response.status_code != 200:
+        for attempt in range(1, max_attempts + 1):
+            token = self._get_auth_token()
+            try:
+                response = requests.post(
+                    api_endpoint,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json"
+                    },
+                    json=request_payload,
+                    timeout=90,
+                )
+            except requests.exceptions.Timeout:
+                sleep_seconds = base_delay * attempt
+                logger.warning(
+                    "vertex_ai_request_timeout_retrying",
+                    file=image_path.name,
+                    attempt=attempt,
+                    retry_in_seconds=round(sleep_seconds, 1),
+                )
+                import time
+                time.sleep(sleep_seconds)
+                continue
+            except requests.exceptions.RequestException as network_error:
+                sleep_seconds = base_delay * attempt
+                logger.warning(
+                    "vertex_ai_network_error_retrying",
+                    file=image_path.name,
+                    attempt=attempt,
+                    error=str(network_error),
+                    retry_in_seconds=round(sleep_seconds, 1),
+                )
+                import time
+                time.sleep(sleep_seconds)
+                continue
+
+            if response.status_code == 200:
+                break
+
+            if response.status_code in [429, 503]:
+                sleep_seconds = base_delay * (attempt * 1.5)
+                logger.warning(
+                    "vertex_ai_rate_limit_pausing",
+                    file=image_path.name,
+                    attempt=attempt,
+                    status=response.status_code,
+                    retry_in_seconds=round(sleep_seconds, 1),
+                )
+                import time
+                time.sleep(sleep_seconds)
+                continue
+
             logger.error("vision_analysis_api_failed", status=response.status_code, body=response.text[:200])
             raise RuntimeError(f"Vertex AI Vision call failed ({response.status_code}): {response.text[:200]}")
+        else:
+            raise RuntimeError(f"Vertex AI Vision call failed after {max_attempts} attempts due to rate limits or timeouts.")
 
         response_json = response.json()
         raw_text = response_json["candidates"][0]["content"]["parts"][0]["text"]

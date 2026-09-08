@@ -61,12 +61,67 @@ def generate_image_description(filename: str) -> str:
     return f"Official figure plate and visual plate for {clean_name}."
 
 
+def build_plate_registry(archive_dir: Path) -> tuple[dict[str, str], dict[str, str]]:
+    plate_hashes: dict[str, str] = {}
+    plate_titles: dict[str, str] = {}
+    if not archive_dir.exists():
+        return plate_hashes, plate_titles
+
+    for plate_path in archive_dir.glob("**/plate_*.png"):
+        try:
+            with open(plate_path, "rb") as stream:
+                digest = hashlib.sha256(stream.read()).hexdigest()[:12]
+                plate_hashes[digest] = plate_path.name
+
+            clean_title = re.sub(r"^plate_\d+_[a-z]+_", "", plate_path.stem.lower()).replace("_", " ")
+            plate_titles[clean_title] = plate_path.name
+            if clean_title.startswith("the "):
+                plate_titles[clean_title.replace("the ", "", 1)] = plate_path.name
+        except Exception:
+            continue
+
+    return plate_hashes, plate_titles
+
+
 class DocumentParser:
     def __init__(self, output_assets_dir: Path | None = None) -> None:
         settings = get_settings()
+        self.archive_dir = settings.raw_archive_dir
         self.output_assets_dir = output_assets_dir or settings.extracted_assets_dir
         self.output_assets_dir.mkdir(parents=True, exist_ok=True)
         self.vision_analyzer = VisionAnalyzer()
+        self.catalog_path = self.output_assets_dir / "visual_catalog.json"
+        self._visual_catalog: dict[str, Any] | None = None
+        self.plate_hashes, self.plate_titles = build_plate_registry(self.archive_dir)
+
+    @property
+    def visual_catalog(self) -> dict[str, Any]:
+        if self._visual_catalog is None:
+            if self.catalog_path.exists():
+                try:
+                    import json
+                    with open(self.catalog_path, "r", encoding="utf-8") as f:
+                        self._visual_catalog = json.load(f)
+                except Exception:
+                    self._visual_catalog = {}
+            else:
+                self._visual_catalog = {}
+        return self._visual_catalog
+
+    def _build_visual_evidence_block(self, asset_filename: str) -> str:
+        if asset_filename not in self.visual_catalog:
+            return ""
+        vis_data = self.visual_catalog[asset_filename]
+        desc = vis_data.get("visual_description", "")
+        txt = vis_data.get("extracted_text", "")
+        elements = []
+        if desc:
+            elements.append(f"Visual Details: {desc}")
+        if txt:
+            elements.append(f"Inscribed Text: {txt}")
+        if elements:
+            return "\n> **[Visual Evidence]**: " + " | ".join(elements) + "\n"
+        return ""
 
     def parse_document(
         self, file_path: Path
@@ -120,20 +175,42 @@ class DocumentParser:
         with Image.open(file_path) as img:
             width, height = img.size
 
-        try:
-            analysis = self.vision_analyzer.analyze_image(file_path)
-            caption = f"{analysis.title}: {analysis.extracted_text[:120]}" if analysis.extracted_text else analysis.title
-            full_content = analysis.rich_content
-        except Exception as error:
-            logger.warning("vision_analyzer_fallback", file=file_path.name, error_detail=str(error))
-            description = generate_image_description(file_path.name)
-            caption = description
-            full_content = (
-                f"# Visual Figure Plate: {metadata.doc_id}\n\n"
-                f"{description}\n\n"
-                f"Asset Path: /assets/{asset_filename}\n"
-                f"Source: {file_path.name}"
-            )
+        if asset_filename in self.visual_catalog:
+            catalog_entry = self.visual_catalog[asset_filename]
+            title = catalog_entry.get("title", metadata.doc_id)
+            extracted_text = catalog_entry.get("extracted_text", "")
+            caption = f"{title}: {extracted_text[:120]}" if extracted_text else title
+            full_content = catalog_entry.get("rich_content")
+            if not full_content:
+                desc = catalog_entry.get("visual_description", "")
+                attrs = catalog_entry.get("attributes", {})
+                attrs_md = "\n".join([f"- **{k.replace('_', ' ').title()}**: {v}" for k, v in attrs.items()])
+                full_content = (
+                    f"# Visual Asset: {title}\n\n"
+                    f"**File**: {asset_filename}\n"
+                    f"**Asset Path**: /assets/{asset_filename}\n\n"
+                    f"### Extracted Text & Data\n"
+                    f"{extracted_text if extracted_text else 'No inscribed text detected.'}\n\n"
+                    f"### Visual Scene Analysis\n"
+                    f"{desc}\n\n"
+                    f"### Key Attributes\n"
+                    f"{attrs_md if attrs_md else 'None recorded.'}"
+                )
+        else:
+            try:
+                analysis = self.vision_analyzer.analyze_image(file_path)
+                caption = f"{analysis.title}: {analysis.extracted_text[:120]}" if analysis.extracted_text else analysis.title
+                full_content = analysis.rich_content
+            except Exception as error:
+                logger.warning("vision_analyzer_fallback", file=file_path.name, error_detail=str(error))
+                description = generate_image_description(file_path.name)
+                caption = description
+                full_content = (
+                    f"# Visual Figure Plate: {metadata.doc_id}\n\n"
+                    f"{description}\n\n"
+                    f"Asset Path: /assets/{asset_filename}\n"
+                    f"Source: {file_path.name}"
+                )
 
         figure = ExtractedFigure(
             figure_id=metadata.doc_id,
@@ -162,7 +239,13 @@ class DocumentParser:
                 if not destination_path.exists():
                     shutil.copy2(resolved_image_path, destination_path)
 
-                text_content = text_content.replace(f"({image_rel_path})", f"(/assets/{asset_filename})")
+                visual_evidence = self._build_visual_evidence_block(asset_filename)
+                old_tag = f"![{alt_text}]({image_rel_path})"
+                new_tag = f"![{alt_text}](/assets/{asset_filename}){visual_evidence}"
+                if old_tag in text_content:
+                    text_content = text_content.replace(old_tag, new_tag)
+                else:
+                    text_content = text_content.replace(f"({image_rel_path})", f"(/assets/{asset_filename})")
 
                 extracted_figures.append(
                     ExtractedFigure(
@@ -182,24 +265,79 @@ class DocumentParser:
         import docx
 
         document = docx.Document(file_path)
-        paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
+        blocks: list[str] = []
+        extracted_figures: list[ExtractedFigure] = []
+        extracted_tables: list[ExtractedTable] = []
 
-        table_markdown_blocks: list[str] = []
-        for table in document.tables:
-            rows_data: list[list[str]] = []
-            for row in table.rows:
-                rows_data.append([cell.text.strip() for cell in row.cells])
-            if rows_data:
-                header = "| " + " | ".join(rows_data[0]) + " |"
-                separator = "| " + " | ".join(["---"] * len(rows_data[0])) + " |"
-                body = "\n".join("| " + " | ".join(row) + " |" for row in rows_data[1:])
-                table_markdown_blocks.append(f"{header}\n{separator}\n{body}")
+        for child in document.element.body:
+            if child.tag.endswith("p"):
+                paragraph = docx.text.paragraph.Paragraph(child, document)
+                style_name = paragraph.style.name if paragraph.style else "Normal"
+                text = paragraph.text.strip()
+                paragraph_lines: list[str] = []
 
-        full_content = "\n\n".join(paragraphs)
-        if table_markdown_blocks:
-            full_content += "\n\n### Tables\n\n" + "\n\n".join(table_markdown_blocks)
+                if style_name == "Title" and text:
+                    paragraph_lines.append(f"# {text}")
+                elif style_name.startswith("Heading") and text:
+                    level_match = re.search(r"\d+", style_name)
+                    level = int(level_match.group(0)) if level_match else 2
+                    paragraph_lines.append(f"{'#' * min(level, 4)} {text}")
+                elif text:
+                    paragraph_lines.append(text)
 
-        return metadata, [], [], full_content
+                blip_ids = paragraph._p.xpath(".//a:blip/@r:embed")
+                for blip_id in blip_ids:
+                    if blip_id in document.part.related_parts:
+                        image_part = document.part.related_parts[blip_id]
+                        blob = image_part.blob
+                        blob_hash = hashlib.sha256(blob).hexdigest()[:12]
+                        plate_filename = self.plate_hashes.get(blob_hash)
+                        if not plate_filename:
+                            ext = image_part.content_type.split("/")[-1].replace("jpeg", "jpg")
+                            plate_filename = f"{metadata.file_hash[:8]}_{file_path.stem}_{blob_hash}.{ext}"
+
+                        destination_path = self.output_assets_dir / plate_filename
+                        if not destination_path.exists():
+                            with open(destination_path, "wb") as f:
+                                f.write(blob)
+
+                        visual_evidence = self._build_visual_evidence_block(plate_filename)
+                        paragraph_lines.append(f"![Figure](/assets/{plate_filename}){visual_evidence}")
+                        extracted_figures.append(
+                            ExtractedFigure(
+                                figure_id=f"{metadata.doc_id}_{plate_filename}",
+                                page_number=1,
+                                bounding_box=(0.0, 0.0, 0.0, 0.0),
+                                local_image_path=destination_path,
+                                caption=generate_image_description(plate_filename),
+                            )
+                        )
+
+                if paragraph_lines:
+                    blocks.append("\n\n".join(paragraph_lines))
+
+            elif child.tag.endswith("tbl"):
+                table = docx.table.Table(child, document)
+                rows_data: list[list[str]] = []
+                for row in table.rows:
+                    rows_data.append([cell.text.strip().replace("\n", " ") for cell in row.cells])
+                if rows_data:
+                    header = "| " + " | ".join(rows_data[0]) + " |"
+                    separator = "| " + " | ".join(["---"] * len(rows_data[0])) + " |"
+                    body = "\n".join("| " + " | ".join(row) + " |" for row in rows_data[1:])
+                    table_markdown = f"{header}\n{separator}\n{body}"
+                    blocks.append(table_markdown)
+                    extracted_tables.append(
+                        ExtractedTable(
+                            table_id=f"{metadata.doc_id}_tbl_{len(extracted_tables)}",
+                            page_number=1,
+                            bounding_box=(0.0, 0.0, 0.0, 0.0),
+                            markdown_content=table_markdown,
+                        )
+                    )
+
+        full_content = "\n\n".join(blocks)
+        return metadata, extracted_figures, extracted_tables, full_content
 
     def _parse_pdf(
         self, file_path: Path, metadata: DocumentMetadata
@@ -217,26 +355,38 @@ class DocumentParser:
             page_text = page.get_text().strip()
             page_figure_markers: list[str] = []
 
+            matched_canonical_plate: str | None = None
+            for title_key, plate_file in self.plate_titles.items():
+                if title_key in page_text.lower():
+                    matched_canonical_plate = plate_file
+                    break
+
             image_list = page.get_images(full=True)
             for image_index, img_info in enumerate(image_list):
                 xref = img_info[0]
                 base_image = document.extract_image(xref)
                 image_bytes = base_image["image"]
                 ext = base_image["ext"]
-                image_filename = f"{metadata.file_hash[:8]}_{file_path.stem}_p{page_index + 1}_{image_index}.{ext}"
-                dest = self.output_assets_dir / image_filename
+
+                blob_hash = hashlib.sha256(image_bytes).hexdigest()[:12]
+                plate_filename = self.plate_hashes.get(blob_hash) or matched_canonical_plate
+                if not plate_filename:
+                    plate_filename = f"{metadata.file_hash[:8]}_{file_path.stem}_p{page_index + 1}_{image_index}.{ext}"
+
+                dest = self.output_assets_dir / plate_filename
                 if not dest.exists():
                     with open(dest, "wb") as f:
                         f.write(image_bytes)
 
-                page_figure_markers.append(f"![Figure p.{page_index + 1}](/assets/{image_filename})")
+                visual_evidence = self._build_visual_evidence_block(plate_filename)
+                page_figure_markers.append(f"![Figure p.{page_index + 1}](/assets/{plate_filename}){visual_evidence}")
                 extracted_figures.append(
                     ExtractedFigure(
-                        figure_id=f"{metadata.doc_id}_p{page_index + 1}_img{image_index}",
+                        figure_id=f"{metadata.doc_id}_p{page_index + 1}_{plate_filename}",
                         page_number=page_index + 1,
                         bounding_box=(0.0, 0.0, 0.0, 0.0),
                         local_image_path=dest,
-                        caption=f"Figure from {file_path.stem} page {page_index + 1}",
+                        caption=generate_image_description(plate_filename),
                     )
                 )
 
@@ -249,18 +399,26 @@ class DocumentParser:
                 if not scan_dest.exists():
                     page_pix.save(str(scan_dest))
 
-                try:
-                    analysis = self.vision_analyzer.analyze_image(scan_dest)
+                if scan_filename in self.visual_catalog:
+                    cached_content = self.visual_catalog[scan_filename].get("rich_content", "")
                     text_parts.append(
                         f"## Page {page_index + 1} (Historical Scan Analysis)\n\n"
                         f"![Historical Document Scan](/assets/{scan_filename})\n\n"
-                        f"{analysis.rich_content}"
+                        f"{cached_content}"
                     )
-                except Exception as vision_err:
-                    logger.warning("scan_vision_analysis_failed", file=file_path.name, page=page_index + 1, error=str(vision_err))
-                    text_parts.append(
-                        f"## Page {page_index + 1}\n\n![Historical Document Scan](/assets/{scan_filename})"
-                    )
+                else:
+                    try:
+                        analysis = self.vision_analyzer.analyze_image(scan_dest)
+                        text_parts.append(
+                            f"## Page {page_index + 1} (Historical Scan Analysis)\n\n"
+                            f"![Historical Document Scan](/assets/{scan_filename})\n\n"
+                            f"{analysis.rich_content}"
+                        )
+                    except Exception as vision_err:
+                        logger.warning("scan_vision_analysis_failed", file=file_path.name, page=page_index + 1, error=str(vision_err))
+                        text_parts.append(
+                            f"## Page {page_index + 1}\n\n![Historical Document Scan](/assets/{scan_filename})"
+                        )
             elif page_text:
                 if figures_str:
                     text_parts.append(f"## Page {page_index + 1}\n\n{page_text}\n\n{figures_str}")

@@ -2,10 +2,13 @@ from typing import Any
 
 from src.backend.agents.state.models import AgentState
 from src.backend.core.database import session_scope
+from src.backend.core.logging import get_logger
 from src.backend.ingestion.embedder import MultimodalEmbedder
 from src.backend.retrieval.reranker import CrossEncoderReranker
 from src.backend.retrieval.schemas import SearchResultChunk
 from src.backend.retrieval.vector_store import PostgresVectorStore
+
+logger = get_logger("retriever")
 
 
 async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
@@ -47,6 +50,16 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
                     existing_ids.add(chunk.chunk_id)
                     new_chunks.append(chunk)
                     collected_figures.extend(chunk.figure_references)
+                    meta = chunk.metadata_payload or {}
+                    logger.info(
+                        "retrieved_chunk_embedding_match",
+                        doc_id=chunk.doc_id,
+                        category=meta.get("source_category", "unknown"),
+                        authority=meta.get("epistemic_weight", 0.5),
+                        cosine_similarity=round(chunk.vector_score, 4) if chunk.vector_score is not None else None,
+                        fulltext_score=round(chunk.keyword_score, 4) if chunk.keyword_score is not None else None,
+                        rrf_score=round(chunk.relevance_score, 4),
+                    )
 
     all_chunks = existing_chunks + new_chunks
     iteration = state.get("iteration_count", 0) + 1

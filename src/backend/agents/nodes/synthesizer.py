@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -6,6 +7,9 @@ from pydantic import BaseModel, Field
 
 from src.backend.agents.llm import get_chat_model
 from src.backend.agents.state.models import AgentState
+from src.backend.core.logging import get_logger
+
+logger = get_logger("synthesizer")
 
 
 class SynthesizerOutput(BaseModel):
@@ -62,25 +66,37 @@ async def synthesize_answer(state: AgentState) -> dict[str, Any]:
     )
 
     llm = get_chat_model(temperature=0.1)
+    content_text = ""
     try:
         response = await llm.ainvoke([
             SystemMessage(content=system_instruction),
             HumanMessage(content=user_prompt),
         ])
-        content_text = response.content.strip()
+        raw_content = response.content
+        if isinstance(raw_content, list):
+            content_text = "".join(part if isinstance(part, str) else part.get("text", "") for part in raw_content).strip()
+        else:
+            content_text = str(raw_content).strip()
 
-        if "```json" in content_text:
-            content_text = content_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in content_text:
-            content_text = content_text.split("```")[1].split("```")[0].strip()
+        cleaned_text = content_text
+        if "```json" in cleaned_text:
+            cleaned_text = cleaned_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in cleaned_text:
+            cleaned_text = cleaned_text.split("```")[1].split("```")[0].strip()
 
-        parsed = json.loads(content_text)
-        answer = parsed.get("answer", content_text)
+        json_candidate = cleaned_text
+        json_match = re.search(r"\{[\s\S]*\}", cleaned_text)
+        if json_match:
+            json_candidate = json_match.group(0)
+
+        parsed = json.loads(json_candidate, strict=False)
+        answer = parsed.get("answer", cleaned_text)
         refs = parsed.get("referenced_figures", figure_urls)
         cits = parsed.get("citations", list(set(citations)))
         contradictions = parsed.get("contradictions", [])
-    except Exception:
-        answer = (
+    except Exception as error:
+        logger.warning("synthesizer_json_parse_fallback", error=str(error))
+        answer = content_text if content_text else (
             f"Based on the archive evidence:\n\n"
             + "\n".join([f"- {c.content[:300]}..." for c in chunks[:3]])
         )

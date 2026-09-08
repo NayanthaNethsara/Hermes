@@ -56,11 +56,19 @@ async def run_agent_track(
     sources_list: list[dict[str, Any]] = []
     for chunk in final_state.get("retrieved_context", []):
         meta = chunk.metadata_payload or {}
-        cat = meta.get("source_category", "")
+        cat = meta.get("source_category", "unknown")
         sources_list.append({
+            "chunk_id": chunk.chunk_id,
             "title": chunk.doc_id,
+            "section": meta.get("section_title", "General"),
+            "category": cat,
+            "epistemic_weight": meta.get("epistemic_weight", 0.5),
+            "vector_score": round(chunk.vector_score, 4) if chunk.vector_score is not None else None,
+            "keyword_score": round(chunk.keyword_score, 4) if chunk.keyword_score is not None else None,
+            "relevance_score": round(chunk.relevance_score, 4),
+            "figures": chunk.figure_references,
             "trust": "high" if cat in ["codex", "image"] or chunk.relevance_score > 0.7 else "medium",
-            "snippet": chunk.content[:250],
+            "snippet": chunk.content[:300],
         })
 
     reasoning_steps = [

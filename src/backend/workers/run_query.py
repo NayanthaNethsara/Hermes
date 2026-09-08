@@ -2,32 +2,30 @@ import argparse
 import asyncio
 import sys
 
-from src.backend.agents.graphs.investigator_1c import build_investigator_1c_graph
-from src.backend.agents.graphs.multimodal_1a import build_multimodal_1a_graph
-from src.backend.agents.state.base import create_initial_state
+from langchain_core.messages import HumanMessage
+
+from src.backend.agents.graphs.workflow import build_unified_graph
 
 
 def format_separator(character: str = "=", length: int = 80) -> str:
     return character * length
 
 
-async def execute_query(question: str, track: str = "1a") -> None:
+async def execute_query(question: str) -> None:
     print(format_separator("="))
     print("THE ARCHIVIST — MULTIMODAL EVIDENCE & EMBEDDING INSPECTOR")
-    print(f"Track: {track.upper()}")
     print(f"Question: {question}")
     print(format_separator("="))
     print()
 
-    if track in ["1c", "investigator"]:
-        graph = build_investigator_1c_graph()
-    else:
-        graph = build_multimodal_1a_graph()
-
-    initial_state = create_initial_state(query=question)
+    graph = build_unified_graph()
+    initial_state = {
+        "root_query": question,
+        "messages": [HumanMessage(content=question)],
+    }
     result = await graph.ainvoke(initial_state)
 
-    retrieved_chunks = result.get("retrieved_context", [])
+    retrieved_chunks = result.get("verified_chunks", []) or result.get("active_chunks", [])
     print(format_separator("-"))
     print(f"RETRIEVED EVIDENCE CHUNKS ({len(retrieved_chunks)} MATCHES)")
     print(format_separator("-"))
@@ -88,10 +86,9 @@ async def execute_query(question: str, track: str = "1a") -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run query against Archivist RAG pipeline with embedding visibility")
     parser.add_argument("--question", "-q", type=str, required=True, help="Question to ask")
-    parser.add_argument("--track", "-t", type=str, default="1a", choices=["1a", "1c"], help="Graph track (1a or 1c)")
     args = parser.parse_args()
 
-    asyncio.run(execute_query(question=args.question, track=args.track))
+    asyncio.run(execute_query(question=args.question))
 
 
 if __name__ == "__main__":

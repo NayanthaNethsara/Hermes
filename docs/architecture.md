@@ -151,10 +151,28 @@ Detected conflicts are returned as `{topic, sources_disagree}` objects.
 
 ### Synthesizer
 
-`agents/nodes/synthesizer.py`. Streams the final answer token by token. It runs
-in two modes: a grounded research answer built from the verified evidence, or a
-short conversational reply for the greeting fast path. Figures referenced in the
-answer are mapped back to the assets served under `/assets`.
+`agents/nodes/synthesizer.py`. Streams the final answer token by token, in one
+of two modes: a grounded research answer built from the verified evidence, or a
+short conversational reply on the greeting fast path.
+
+**Figure selection.** The model is not shown bare filenames. For every figure
+attached to the surviving evidence, `retrieval/visuals.py` looks the file up in
+the ingestion-time vision catalog and gives the model its title, inscribed
+text, a description of what it depicts, and the recorded key-value data. The
+model decides from that which figures carry evidence for what it asserts, and
+embeds those and only those, with a caption written for the reader. The
+caption matters: the interface renders it as the visible label under the plate.
+
+`referenced_figures` is then derived from what the answer actually embedded,
+matched by filename or `/assets/` URL. When the model embeds nothing, the list
+is empty. Anything in `referenced_figures` that the answer did not inline is
+rendered by the interface as a separate figure below the text, so attributing a
+figure the answer never used would put an unrelated plate in front of the
+reader.
+
+The prompts are in `agents/prompts.py`: one system instruction covering source
+authority, figure selection and the Markdown subset the interface renders, plus
+builders for the research and greeting turns.
 
 ## 3. Retrieval
 

@@ -1,17 +1,15 @@
 from typing import Any
-import json
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.backend.core.config import get_settings
 from src.backend.core.database import get_database_session
 from src.backend.ingestion.embedder import MultimodalEmbedder
 from src.backend.retrieval.reranker import CrossEncoderReranker
 from src.backend.retrieval.schemas import SearchQuery, SearchResponse
 from src.backend.retrieval.vector_store import DocumentChunkModel, PostgresVectorStore
+from src.backend.retrieval.visuals import lookup_visual
 
 router = APIRouter(tags=["retrieval"])
 
@@ -85,18 +83,8 @@ async def get_document_details(
 @router.get("/api/visuals/{filename:path}", summary="Get catalog metadata for a visual asset")
 @router.get("/retrieval/visuals/{filename:path}")
 async def get_visual_catalog_item(filename: str) -> dict[str, Any]:
-    settings = get_settings()
-    catalog_file = settings.extracted_assets_dir / "visual_catalog.json"
-    if not catalog_file.exists():
-        raise HTTPException(status_code=404, detail="Visual catalog not found")
-
-    catalog = json.loads(catalog_file.read_text(encoding="utf-8"))
-    clean_name = filename.split("/")[-1]
-    if clean_name in catalog:
-        return catalog[clean_name]
-
-    for key, value in catalog.items():
-        if clean_name in key or key in clean_name:
-            return value
-
-    raise HTTPException(status_code=404, detail=f"Visual asset '{clean_name}' not found")
+    details = lookup_visual(filename)
+    if details is None:
+        clean_name = filename.split("/")[-1]
+        raise HTTPException(status_code=404, detail=f"Visual asset '{clean_name}' not found")
+    return details

@@ -7,11 +7,13 @@ from pydantic import BaseModel, Field
 from src.backend.agents.llm import get_chat_model
 from src.backend.agents.prompts import (
     HERMES_SYSTEM_INSTRUCTION,
+    build_greeting_user_prompt,
     build_synthesis_context,
     build_synthesis_user_prompt,
 )
 from src.backend.agents.state.models import ConversationalInvestigatorState
 from src.backend.core.logging import get_logger
+from src.backend.retrieval.visuals import asset_url, describe_available_figures
 
 logger = get_logger("synthesizer")
 
@@ -33,15 +35,10 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
 
     citations = list(dict.fromkeys([chunk.doc_id for chunk in chunks]))
     context_str = build_synthesis_context(chunks)
-    figures_str = "\n".join(figure_urls) if figure_urls else "No extracted figures."
+    figures_str = describe_available_figures(figure_urls)
 
     if state.get("is_conversational"):
-        user_prompt = (
-            f"User Greeting/Inquiry: {root_query}\n\n"
-            "Provide a brief, polite greeting as Hermes, the Ashen Era archive intelligence assistant. "
-            "State that you are ready to investigate historical records, illustrations, threat classifications, "
-            "and conflicting accounts across the realm."
-        )
+        user_prompt = build_greeting_user_prompt(root_query)
     else:
         user_prompt = build_synthesis_user_prompt(
             root_query=root_query,
@@ -73,11 +70,10 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
             + "\n".join([f"- {c.content[:300]}..." for c in chunks[:3]])
         )
 
-    embedded_figures = [
+    actual_referenced_figures = [
         fig for fig in figure_urls
-        if Path(fig).name in answer_text or fig in answer_text
+        if Path(fig).name in answer_text or fig in answer_text or asset_url(fig) in answer_text
     ]
-    actual_referenced_figures = embedded_figures if embedded_figures else figure_urls[:1]
 
     steps = list(state.get("reasoning_steps", []))
     if state.get("is_conversational"):
@@ -86,7 +82,9 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
         cited_str = ", ".join(f"`{c}`" for c in citations[:3])
         syn_detail = f"Synthesized answer citing {len(citations)} authoritative source(s) [{cited_str}]"
         if actual_referenced_figures:
-            syn_detail += f" with {len(actual_referenced_figures)} inline visual plate(s)"
+            syn_detail += f" with {len(actual_referenced_figures)} of {len(figure_urls)} available plate(s) embedded"
+        elif figure_urls:
+            syn_detail += f"; none of the {len(figure_urls)} available plate(s) supported the answer"
         if unresolved_gap:
             syn_detail += f"; disclosed unresolved gap: {unresolved_gap}"
 

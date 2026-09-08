@@ -98,7 +98,7 @@ health:
 	curl -i http://$(HOST):$(PORT)/api/health
 
 ask:
-	$(PYTHON) -c 'import asyncio; from src.backend.agents.graphs.multimodal_1a import build_multimodal_1a_graph; from src.backend.agents.state.base import create_initial_state; g = build_multimodal_1a_graph(); res = asyncio.run(g.ainvoke(create_initial_state("$(Q)"))); print("\n--- ANSWER ---\n" + res.get("final_answer", "") + "\n\n--- FIGURES ---\n" + str(res.get("referenced_figures", [])))'
+	$(PYTHON) -m src.backend.workers.run_query --question "$(Q)"
 
 docker-build:
 	docker compose build

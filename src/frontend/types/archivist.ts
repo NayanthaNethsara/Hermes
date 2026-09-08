@@ -14,6 +14,13 @@ export interface Source {
   title: string;
   trust: TrustTier;
   snippet: string;
+  category?: string;
+  epistemic_weight?: number;
+  vector_score?: number | null;
+  keyword_score?: number | null;
+  relevance_score?: number;
+  figures?: string[];
+  section?: string;
 }
 
 export interface Contradiction {
@@ -26,4 +33,6 @@ export interface ArchivistResponse {
   reasoning_steps: ReasoningStep[];
   sources: Source[];
   contradictions: Contradiction[];
+  referenced_figures?: string[];
+  citations?: string[];
 }

@@ -32,9 +32,24 @@ export function SourcesPanel({ sources }: { sources: Source[] | null }) {
                   <span className="font-serif text-[13.5px] leading-snug font-semibold">
                     {source.title}
                   </span>
+                  {source.category && (
+                    <span className="border-border bg-muted/50 text-muted-foreground rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider">
+                      {source.category}
+                    </span>
+                  )}
                 </div>
-                <div className="mt-2">
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <TrustBadge trust={source.trust} />
+                  {source.vector_score !== undefined && source.vector_score !== null && (
+                    <span className="border-border bg-background text-muted-foreground rounded border px-1.5 py-0.5 text-[10.5px] font-mono">
+                      Sim: {source.vector_score.toFixed(3)}
+                    </span>
+                  )}
+                  {source.epistemic_weight !== undefined && (
+                    <span className="border-border bg-background text-muted-foreground rounded border px-1.5 py-0.5 text-[10.5px] font-mono">
+                      Auth: {source.epistemic_weight}
+                    </span>
+                  )}
                 </div>
                 <p className="text-muted-foreground mt-2.5 line-clamp-3 text-xs leading-relaxed">
                   {source.snippet}

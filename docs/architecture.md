@@ -137,6 +137,17 @@ metadata header, so without that stripping the critic would see a title and a
 file path where the description of the plate should be, and would keep
 searching for something already in front of it.
 
+Prose alone is not enough either. The ingestion vision pass describes a plate
+in the order attire, headwear, held items, emblems, so a portrait can spend
+eight hundred characters on armour before it reaches the subject's hands, while
+a relic plate leads with the object. The critic therefore receives the same
+catalog summaries the synthesizer gets, and the structured `attributes` in
+those summaries carry the answer in a dozen words where the prose takes a
+paragraph: `held_object_left_hand`, `central_emblem`, `threat_rating`. Those
+summaries are bounded by character budget rather than by a count of fields,
+because a field count silently drops whichever attribute happens to sit last,
+which is as likely as not the one being asked about.
+
 At the hop cap the critic skips its model call entirely, since the route out is
 forced regardless of what it would say. Failures and unparseable replies fall
 through to `answered`, so a critic problem costs an answer's thoroughness

@@ -1,28 +1,30 @@
 import type {
-  ArchivistResponse,
+  HermesResponse,
   DocumentDetails,
   VisualCatalogItem,
-} from "@/types/archivist";
+} from "@/types/hermes";
+import {
+  AskQuerySchema,
+  DocumentIdSchema,
+  VisualFilenameSchema,
+} from "@/lib/validation";
+import { API_BASE_URL, API_ENDPOINTS } from "@/lib/constants";
+export class HermesApiError extends Error {}
 
-const DEFAULT_API_URL = "http://localhost:8000";
 
-function getApiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
-}
+export async function askHermes(question: string): Promise<HermesResponse> {
+  const validated = AskQuerySchema.parse({ question });
 
-export class ArchivistApiError extends Error {}
-
-export async function askArchivist(question: string): Promise<ArchivistResponse> {
   let response: Response;
   try {
-    response = await fetch(`${getApiBaseUrl()}/api/ask`, {
+    response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.ASK}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question: validated.question }),
     });
   } catch {
-    throw new ArchivistApiError(
-      "Could not reach the backend. Is it running at " + getApiBaseUrl() + "?"
+    throw new HermesApiError(
+      `Could not reach the backend. Is it running at ${API_BASE_URL}?`
     );
   }
 
@@ -33,23 +35,25 @@ export async function askArchivist(question: string): Promise<ArchivistResponse>
       data && typeof data.error === "string"
         ? data.error
         : `Request failed with status ${response.status}`;
-    throw new ArchivistApiError(message);
+    throw new HermesApiError(message);
   }
 
-  return data as ArchivistResponse;
+  return data as HermesResponse;
 }
 
 export async function fetchDocumentDetails(docId: string): Promise<DocumentDetails> {
   const cleanId = docId.replace(/^\d+$/, "").trim() || docId;
+  const validatedId = DocumentIdSchema.parse(cleanId);
+
   let response: Response;
   try {
-    response = await fetch(`${getApiBaseUrl()}/api/documents/${cleanId}`);
+    response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.DOCUMENTS}/${validatedId}`);
   } catch {
-    throw new ArchivistApiError(`Could not reach backend to load document ${cleanId}`);
+    throw new HermesApiError(`Could not reach backend to load document ${validatedId}`);
   }
 
   if (!response.ok) {
-    throw new ArchivistApiError(`Document '${cleanId}' could not be loaded.`);
+    throw new HermesApiError(`Document '${validatedId}' could not be loaded.`);
   }
 
   return response.json();
@@ -57,15 +61,17 @@ export async function fetchDocumentDetails(docId: string): Promise<DocumentDetai
 
 export async function fetchVisualDetails(filename: string): Promise<VisualCatalogItem> {
   const cleanName = filename.split("/").pop() || filename;
+  const validatedName = VisualFilenameSchema.parse(cleanName);
+
   let response: Response;
   try {
-    response = await fetch(`${getApiBaseUrl()}/api/visuals/${cleanName}`);
+    response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.VISUALS}/${validatedName}`);
   } catch {
-    throw new ArchivistApiError(`Could not reach backend to load visual asset ${cleanName}`);
+    throw new HermesApiError(`Could not reach backend to load visual asset ${validatedName}`);
   }
 
   if (!response.ok) {
-    throw new ArchivistApiError(`Visual asset '${cleanName}' could not be loaded.`);
+    throw new HermesApiError(`Visual asset '${validatedName}' could not be loaded.`);
   }
 
   return response.json();

@@ -3,9 +3,10 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ArchivistResponse } from "@/types/archivist";
+import type { HermesResponse } from "@/types/hermes";
 import { ContradictionBanner } from "@/components/contradiction-banner";
 import { TrustBadge } from "@/components/trust-badge";
+import { cleanWikilinks } from "@/lib/utils";
 
 function formatFigureCaption(path: string): string {
   const filename = path.split("/").pop() || path;
@@ -25,7 +26,7 @@ export function AnswerCard({
   onSelectImage,
 }: {
   question: string;
-  response: ArchivistResponse | null;
+  response: HermesResponse | null;
   onSelectDocument?: (docId: string) => void;
   onSelectImage?: (imagePath: string) => void;
 }) {
@@ -34,14 +35,12 @@ export function AnswerCard({
 
   return (
     <div className="space-y-4 w-full max-w-2xl mx-auto py-1">
-      {/* User Question */}
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-2xl bg-[#1c1c1f] text-[#ededed] px-4 py-2.5 text-[14px] leading-relaxed border border-white/5">
           {question}
         </div>
       </div>
 
-      {/* Assistant Turn */}
       <div className="space-y-4">
         {!response ? (
           <div className="flex items-center gap-2 py-3 text-[#71717a] text-xs font-mono">
@@ -72,9 +71,9 @@ export function AnswerCard({
                     </h3>
                   ),
                   p: ({ children }) => (
-                    <p className="leading-relaxed text-[#d4d4d8] mb-2.5 last:mb-0">
+                    <div className="leading-relaxed text-[#d4d4d8] mb-2.5 last:mb-0">
                       {children}
-                    </p>
+                    </div>
                   ),
                   strong: ({ children }) => (
                     <strong className="font-medium text-white">
@@ -122,13 +121,21 @@ export function AnswerCard({
                     </code>
                   ),
                   img: ({ src, alt }) => (
-                    <div
+                    <span
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
                         if (typeof src === "string" && onSelectImage) {
                           onSelectImage(src);
                         }
                       }}
-                      className="group my-3 overflow-hidden rounded-xl border border-white/10 bg-[#161618] cursor-pointer hover:border-white/20 transition-colors"
+                      onKeyDown={(e) => {
+                        if ((e.key === "Enter" || e.key === " ") && typeof src === "string" && onSelectImage) {
+                          e.preventDefault();
+                          onSelectImage(src);
+                        }
+                      }}
+                      className="group my-3 block overflow-hidden rounded-xl border border-white/10 bg-[#161618] cursor-pointer hover:border-white/20 transition-colors"
                       title="Inspect plate"
                     >
                       {src && (
@@ -136,22 +143,21 @@ export function AnswerCard({
                         <img
                           src={src}
                           alt={alt || "Archive Visual"}
-                          className="max-h-72 w-full object-contain"
+                          className="max-h-72 w-full object-contain block"
                         />
                       )}
-                      <div className="border-t border-white/5 bg-[#121214] px-3 py-1.5 flex items-center justify-between text-[11px] text-[#71717a]">
+                      <span className="border-t border-white/5 bg-[#121214] px-3 py-1.5 flex items-center justify-between text-[11px] text-[#71717a]">
                         <span>{alt || "Visual Evidence"}</span>
                         <span className="text-[#a1a1aa]">Click to inspect</span>
-                      </div>
-                    </div>
+                      </span>
+                    </span>
                   ),
                 }}
               >
-                {response.answer}
+                {cleanWikilinks(response.answer)}
               </ReactMarkdown>
             </div>
 
-            {/* Figures Gallery */}
             {response.referenced_figures && response.referenced_figures.length > 0 && (
               <div className="pt-2 border-t border-white/5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -181,7 +187,6 @@ export function AnswerCard({
               </div>
             )}
 
-            {/* Bottom Actions: Citations and Clean Disclosure */}
             <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
               {response.citations && response.citations.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -223,14 +228,13 @@ export function AnswerCard({
               </div>
             </div>
 
-            {/* Collapsible Sources */}
             {showSources && response.sources && response.sources.length > 0 && (
-              <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2 text-xs">
+              <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2.5 text-xs">
                 {response.sources.map((src, i) => (
                   <div
                     key={i}
                     onClick={() => onSelectDocument && onSelectDocument(src.title)}
-                    className="p-2.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors cursor-pointer space-y-1"
+                    className="p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors cursor-pointer space-y-1.5 border border-white/5"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-white text-[12px] truncate">
@@ -238,22 +242,103 @@ export function AnswerCard({
                       </span>
                       <TrustBadge trust={src.trust} />
                     </div>
-                    <p className="text-[#a1a1aa] line-clamp-2 leading-relaxed text-[11px]">
-                      {src.snippet}
-                    </p>
+                    <div className="text-[#a1a1aa] leading-relaxed text-[11.5px]">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          h1: ({ children }) => (
+                            <h4 className="text-[12px] font-semibold text-white mt-1 mb-0.5">
+                              {children}
+                            </h4>
+                          ),
+                          h2: ({ children }) => (
+                            <h5 className="text-[11.5px] font-semibold text-white mt-1 mb-0.5">
+                              {children}
+                            </h5>
+                          ),
+                          h3: ({ children }) => (
+                            <h6 className="text-[11px] font-medium text-[#e4e4e7] mt-0.5 mb-0.5">
+                              {children}
+                            </h6>
+                          ),
+                          p: ({ children }) => (
+                            <div className="mb-1 last:mb-0 leading-relaxed text-[#a1a1aa]">
+                              {children}
+                            </div>
+                          ),
+                          strong: ({ children }) => (
+                            <strong className="font-medium text-white">
+                              {children}
+                            </strong>
+                          ),
+                          ul: ({ children }) => (
+                            <ul className="my-1 list-disc pl-4 space-y-0.5 text-[11px]">
+                              {children}
+                            </ul>
+                          ),
+                          ol: ({ children }) => (
+                            <ol className="my-1 list-decimal pl-4 space-y-0.5 text-[11px]">
+                              {children}
+                            </ol>
+                          ),
+                          li: ({ children }) => (
+                            <li className="leading-relaxed">{children}</li>
+                          ),
+                          table: ({ children }) => (
+                            <div className="my-1.5 overflow-x-auto rounded border border-white/10 bg-black/20">
+                              <table className="w-full border-collapse text-left text-[11px]">
+                                {children}
+                              </table>
+                            </div>
+                          ),
+                          th: ({ children }) => (
+                            <th className="border-b border-white/10 bg-white/5 px-2.5 py-1 font-medium text-white">
+                              {children}
+                            </th>
+                          ),
+                          td: ({ children }) => (
+                            <td className="border-b border-white/5 px-2.5 py-1 text-[#a1a1aa] last:border-b-0">
+                              {children}
+                            </td>
+                          ),
+                          code: ({ children }) => (
+                            <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10.5px] text-white">
+                              {children}
+                            </code>
+                          ),
+                        }}
+                      >
+                        {cleanWikilinks(src.snippet)}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Collapsible Trace */}
             {showReasoning && response.reasoning_steps && response.reasoning_steps.length > 0 && (
               <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2 text-xs">
                 {response.reasoning_steps.map((step) => (
-                  <div key={step.step} className="flex gap-2 text-[11.5px]">
-                    <span className="font-mono text-[#71717a] shrink-0">{step.step}.</span>
-                    <span className="text-white font-medium">{step.action}:</span>
-                    <span className="text-[#a1a1aa]">{step.found}</span>
+                  <div key={step.step} className="flex items-start gap-2 text-[11.5px]">
+                    <span className="font-mono text-[#71717a] shrink-0 mt-0.5">{step.step}.</span>
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      <p className="text-white font-medium">{step.action}</p>
+                      <div className="text-[#a1a1aa] text-[11px] leading-relaxed">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            p: ({ children }) => <span>{children}</span>,
+                            code: ({ children }) => (
+                              <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10.5px] text-white">
+                                {children}
+                              </code>
+                            ),
+                          }}
+                        >
+                          {cleanWikilinks(step.found)}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>

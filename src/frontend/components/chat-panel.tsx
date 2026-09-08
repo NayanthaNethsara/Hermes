@@ -1,21 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ArchivistResponse } from "@/types/archivist";
+import type { ChatTurn } from "@/types/hermes";
 import { AnswerCard } from "@/components/answer-card";
 import { ChatInputBar } from "@/components/chat-input-bar";
 
-const SUGGESTIONS = [
-  { label: "House Morvain", query: "What is the history of House Morvain?" },
-  { label: "Gauntlet of Sorrowfell", query: "What are the origins and powers of the Gauntlet of Sorrowfell?" },
-  { label: "Bleeding Crown", query: "What contradictions exist regarding the Bleeding Crown?" },
-  { label: "Malchior Cindervale", query: "Who was Malchior Cindervale and why was he called the Flame-Touched?" },
-];
-
-export interface ChatTurn {
-  question: string;
-  response: ArchivistResponse | null;
-}
+import { SUGGESTED_QUERIES } from "@/lib/constants";
 
 export function ChatPanel({
   turns,
@@ -47,7 +37,6 @@ export function ChatPanel({
   return (
     <div className="flex h-full w-full flex-col overflow-hidden relative">
       {turns.length === 0 ? (
-        /* Minimal Empty State */
         <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col items-center justify-center px-4 py-12 max-w-2xl mx-auto w-full">
           <div className="text-center mb-8 space-y-1">
             <h1 className="text-2xl font-medium tracking-tight text-white">
@@ -68,7 +57,7 @@ export function ChatPanel({
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2 max-w-xl">
-            {SUGGESTIONS.map((item) => (
+            {SUGGESTED_QUERIES.map((item) => (
               <button
                 key={item.label}
                 type="button"
@@ -81,7 +70,6 @@ export function ChatPanel({
           </div>
         </div>
       ) : (
-        /* Conversation Stream */
         <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 flex flex-col">
           <div className="w-full max-w-2xl mx-auto space-y-8 flex-1">
             {turns.map((turn, i) => (

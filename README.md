@@ -1,60 +1,79 @@
-# The Archivist
+# The Archivist — Hermes
 
 An AI research assistant that answers questions over the Ashen Era Archive by
-searching the way a human would — planning searches, weighing how much each
+searching the way a human would: planning searches, weighing how much each
 source can be trusted, and surfacing contradictions between sources instead of
 quietly picking a side.
 
 Built for SLIIT Codefest 2026, AI Competition **Sub-track 1C** ("Searching the
 Way a Human Does") as primary, and **Sub-track 1B** ("Connecting Facts Across
-Thousands of Pages") as secondary — the knowledge graph that drives multi-hop
-reasoning links facts across the whole corpus, which is exactly what 1B asks
-for.
+Thousands of Pages") as secondary.
 
-## What it does
+## What It Does
 
-A question goes through a loop of three small agents on top of a retrieval
-layer, capped at 5 search hops:
+A question flows through a LangGraph agent pipeline with conditional routing:
 
-**Planner** (what should we search next?) → **Retriever** (Chroma vector search
-+ NetworkX knowledge graph) → **Critic** (is this enough? do these sources
-conflict?) → repeat, or hand off to the **Synthesizer** to write the answer.
+```
+User → Guardrail → Planner → Retriever → Arbitrator → Synthesizer → User
+              ↘ (greeting) ────────────────────────────↗
+```
+
+- **Guardrail** classifies intent — greetings skip retrieval entirely
+- **Planner** rewrites follow-up questions into standalone queries using dialogue history
+- **Retriever** runs hybrid vector + full-text search (pgvector RRF), cross-encoder reranking, and Redis caching
+- **Arbitrator** detects factual contradictions across epistemic authority tiers
+- **Synthesizer** streams a sourced, markdown-formatted answer via SSE
 
 Every answer carries its sources with a trust tier (`high` / `medium` /
-`medium-low` / `low`), the agent's own search trace, and an explicit warning
+`medium-low` / `low`), the agent's search trace, and an explicit warning
 when two sources disagree.
 
-Two front doors, one backend: a three-panel Next.js web UI and a Telegram bot.
+## Quick Start
 
-## Setup
+```bash
+# Prerequisites: Python 3.11+, Node.js 20+, Docker (for PostgreSQL + Redis)
 
-**See [docs/SETUP.md](docs/SETUP.md)** for the full step-by-step — API keys, environment,
-ingestion, and running each piece. Short version: copy
-`configuration-example/.env.example` to `.env` at the repo root and fill in
-your keys.
+# 1. Environment
+cp configuration-example/.env.example .env   # fill in API keys
 
-Read [docs/SETUP.md § API budget](docs/SETUP.md#api-budget) before a heavy testing
-session — the OpenRouter free tier is the tightest constraint in the project.
+# 2. Infrastructure
+make db          # PostgreSQL + Redis via docker-compose
+
+# 3. Backend
+make backend     # installs deps + starts uvicorn
+
+# 4. Frontend (separate terminal)
+make frontend    # installs deps + starts Next.js dev server
+```
+
+Open `http://localhost:3000/chat` — the app routes to `/chat/<sessionId>` automatically.
+
+See [docs/SETUP.md](docs/SETUP.md) for the full step-by-step guide.
 
 ## Docs
 
-| File | What's in it |
+| File | Contents |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | System design, request flow, data model, and the frozen API contract (section 6) |
-| [docs/diagrams/architecture.md](docs/diagrams/architecture.md) | The same two diagrams as standalone files |
+| [docs/architecture.md](docs/architecture.md) | System design, agent graph, data flow, and API contract |
+| [docs/user-flows.md](docs/user-flows.md) | End-to-end user flow diagrams for all interaction paths |
 | [docs/SETUP.md](docs/SETUP.md) | Getting it running, plus troubleshooting |
-| [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | How to verify answer quality is good enough to submit, without more coding |
+| [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | How to verify answer quality |
 | [docs/decisions.md](docs/decisions.md) | Choices made along the way and why |
 | [docs/limitations.md](docs/limitations.md) | What's known to be weak or untested |
-| [docs/BUILD_PROMPTS.md](docs/BUILD_PROMPTS.md) | The build prompts each component was written from |
-| [docs/SKILLS.md](docs/SKILLS.md) | Agent skills and capabilities documentation |
 
 ## Layout
 
 ```
 src/
-├── backend/       FastAPI app, orchestrator loop, agents, retrieval, trust layer
-└── frontend/      Next.js three-panel UI
-data/              Chroma DB + knowledge graph (generated, gitignored)
-docker-compose.yml Fullstack container orchestration
+├── backend/        FastAPI app, LangGraph agents, retrieval, trust layer
+│   ├── agents/     Graph nodes (guardrail, planner, retriever, arbitrator, synthesizer)
+│   ├── core/       Config, database, Redis, rate limiting, logging
+│   ├── ingestion/  Corpus parsing, chunking, embedding
+│   └── retrieval/  Vector store, reranker, schemas
+└── frontend/       Next.js App Router UI
+    ├── app/        Route pages (/, /chat, /chat/[sessionId])
+    ├── components/ Chat panel, sidebar, answer cards, modals
+    └── lib/        API client, constants, validation
+data/               Ingested corpus data (gitignored)
+docker-compose.yml  PostgreSQL + Redis container orchestration
 ```

@@ -36,3 +36,28 @@ export interface ArchivistResponse {
   referenced_figures?: string[];
   citations?: string[];
 }
+
+export interface DocumentChunk {
+  chunk_id: string;
+  section_title: string;
+  content: string;
+  figures: string[];
+  tables: string[];
+}
+
+export interface DocumentDetails {
+  doc_id: string;
+  source_category: string;
+  epistemic_weight: number;
+  total_chunks: number;
+  chunks: DocumentChunk[];
+}
+
+export interface VisualCatalogItem {
+  title: string;
+  extracted_text: string;
+  visual_description: string;
+  attributes: Record<string, any>;
+  asset_path: string;
+  rich_content?: string;
+}

@@ -1,20 +1,13 @@
 import type { Metadata } from "next";
-import { Inter, Fraunces } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  style: ["normal", "italic"],
-  variable: "--font-serif",
-});
-
 export const metadata: Metadata = {
-  title: "The Archivist",
+  title: "Hermes | TheKade",
   description:
-    "Ask questions about the Ashen Era Archive and see how the answer was found.",
+    "Historical archive intelligence by TheKade.",
 };
 
 export default function RootLayout({
@@ -25,9 +18,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`h-full antialiased ${inter.variable} ${fraunces.variable} font-sans`}
+      className={`h-full dark ${inter.variable} font-sans`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col bg-[#131314] text-[#e3e3e3] antialiased">
+        {children}
+      </body>
     </html>
   );
 }

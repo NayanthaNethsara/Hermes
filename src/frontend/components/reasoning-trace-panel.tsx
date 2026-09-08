@@ -1,5 +1,5 @@
 import type { ReasoningStep } from "@/types/archivist";
-import { CompassIcon } from "@/components/icons";
+import { Workflow } from "lucide-react";
 
 export function ReasoningTracePanel({
   steps,
@@ -7,55 +7,34 @@ export function ReasoningTracePanel({
   steps: ReasoningStep[] | null;
 }) {
   return (
-    <aside className="card-elevated flex h-full w-80 shrink-0 flex-col overflow-hidden rounded-xl">
-      <div className="border-border flex items-center gap-2 border-b px-5 py-4">
-        <CompassIcon className="text-muted-foreground h-4.5 w-4.5" />
-        <h2 className="font-serif text-[15px] font-semibold tracking-tight">
-          Reasoning Trace
-        </h2>
+    <div className="w-full rounded-2xl border border-white/10 bg-[#1e1f20] overflow-hidden flex flex-col">
+      <div className="flex items-center gap-2 border-b border-white/5 px-4 py-3 bg-[#18191a] text-white text-xs font-semibold uppercase tracking-wider">
+        <Workflow size={14} className="text-[#7cacf8]" />
+        <span>Agent Reasoning Trace</span>
       </div>
-      <div className="scrollbar-thin flex-1 overflow-y-auto p-4">
+
+      <div className="p-3">
         {!steps || steps.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 px-3 py-12 text-center">
-            <span className="border-border bg-muted text-muted-foreground/70 flex h-11 w-11 items-center justify-center rounded-full border">
-              <CompassIcon className="h-5 w-5" />
-            </span>
-            <p className="text-muted-foreground text-sm leading-relaxed">
-              Reasoning steps will appear here once you ask a question.
-            </p>
+          <div className="flex flex-col items-center gap-2 py-8 text-center text-[#9aa0a6]">
+            <Workflow size={24} className="opacity-40" />
+            <p className="text-xs">No active reasoning trace.</p>
           </div>
         ) : (
-          <ol>
-            {steps.map((step, i) => {
-              const isActive = i === steps.length - 1;
-              return (
-                <li key={step.step} className="relative flex gap-3.5 pb-7 last:pb-0">
-                  {i !== steps.length - 1 && (
-                    <span className="bg-border absolute top-8 bottom-0 left-3.75 w-px" />
-                  )}
-                  <span
-                    className={
-                      isActive
-                        ? "bg-primary text-primary-foreground ring-background relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-4"
-                        : "border-primary/30 text-primary/60 ring-background relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 bg-transparent text-xs font-semibold ring-4"
-                    }
-                  >
-                    {step.step}
-                  </span>
-                  <div className="pt-1 pb-1">
-                    <p className="text-[13.5px] leading-snug font-medium">
-                      {step.action}
-                    </p>
-                    <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-                      {step.found}
-                    </p>
-                  </div>
-                </li>
-              );
-            })}
+          <ol className="space-y-3">
+            {steps.map((step) => (
+              <li key={step.step} className="flex gap-2.5 text-xs">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#7cacf8]/15 text-[#7cacf8] font-mono font-medium text-[10.5px]">
+                  {step.step}
+                </span>
+                <div className="space-y-0.5">
+                  <p className="font-medium text-white text-[12px]">{step.action}</p>
+                  <p className="text-[#9aa0a6] text-[11px] leading-relaxed">{step.found}</p>
+                </div>
+              </li>
+            ))}
           </ol>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

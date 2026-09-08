@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ArchivistResponse } from "@/types/archivist";
 import { AnswerCard } from "@/components/answer-card";
-import { ChatIcon, SearchIcon, SendIcon } from "@/components/icons";
+import { ChatInputBar } from "@/components/chat-input-bar";
 
-const QUICK_ACTIONS = [
-  "Trace a chain of events",
-  "Check for conflicting sources",
-  "Search the archive",
+const SUGGESTIONS = [
+  { label: "House Morvain", query: "What is the history of House Morvain?" },
+  { label: "Gauntlet of Sorrowfell", query: "What are the origins and powers of the Gauntlet of Sorrowfell?" },
+  { label: "Bleeding Crown", query: "What contradictions exist regarding the Bleeding Crown?" },
+  { label: "Malchior Cindervale", query: "Who was Malchior Cindervale and why was he called the Flame-Touched?" },
 ];
 
 export interface ChatTurn {
@@ -20,103 +21,91 @@ export function ChatPanel({
   turns,
   onSubmit,
   disabled,
+  onSelectDocument,
+  onSelectImage,
 }: {
   turns: ChatTurn[];
   onSubmit: (text: string) => void;
   disabled?: boolean;
+  onSelectDocument?: (docId: string) => void;
+  onSelectImage?: (imagePath: string) => void;
 }) {
-  const [value, setValue] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [inputValue, setInputValue] = useState("");
+  const scrollEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns]);
 
-  const submit = (text: string) => {
+  const handleSubmit = (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
     onSubmit(trimmed);
-    setValue("");
+    setInputValue("");
   };
 
   return (
-    <section className="card-elevated flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
-      <div className="border-border flex items-center gap-2 border-b px-5 py-4">
-        <ChatIcon className="text-muted-foreground h-4.5 w-4.5" />
-        <h2 className="font-serif text-[15px] font-semibold tracking-tight">Chat</h2>
-      </div>
-
-      <div ref={scrollRef} className="scrollbar-thin flex-1 overflow-y-auto px-5 py-5">
-        {turns.length === 0 ? (
-          <div className="mx-auto flex h-full max-w-lg flex-col justify-center gap-6">
-            <div>
-              <h1 className="font-serif text-[28px] leading-tight font-semibold tracking-tight text-balance">
-                Let&apos;s search the archive&hellip;
-              </h1>
-              <p className="text-muted-foreground mt-3 text-[14.5px] leading-relaxed">
-                This is your space to ask questions about the Ashen Era
-                Archive and see how the answer was found — which sources were
-                used, how trustworthy they are, and where they disagree.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2.5">
-              {QUICK_ACTIONS.map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  onClick={() => submit(action)}
-                  className="border-border bg-background hover:border-foreground/25 hover:bg-accent text-foreground/80 group inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[13.5px] font-medium transition-colors"
-                >
-                  <SearchIcon className="text-muted-foreground group-hover:text-foreground/70 h-3.5 w-3.5 transition-colors" />
-                  {action}
-                </button>
-              ))}
-            </div>
+    <div className="flex h-full w-full flex-col overflow-hidden relative">
+      {turns.length === 0 ? (
+        /* Minimal Empty State */
+        <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col items-center justify-center px-4 py-12 max-w-2xl mx-auto w-full">
+          <div className="text-center mb-8 space-y-1">
+            <h1 className="text-2xl font-medium tracking-tight text-white">
+              Hermes
+            </h1>
+            <p className="text-[#8e8e93] text-sm">
+              Historical archive intelligence by TheKade.
+            </p>
           </div>
-        ) : (
-          <div className="space-y-6">
-            {turns.map((turn, i) => (
-              <AnswerCard key={i} question={turn.question} response={turn.response} />
+
+          <div className="w-full mb-6">
+            <ChatInputBar
+              value={inputValue}
+              onChange={setInputValue}
+              onSubmit={handleSubmit}
+              disabled={disabled}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-2 max-w-xl">
+            {SUGGESTIONS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => handleSubmit(item.query)}
+                className="h-7 px-3 rounded-full bg-white/5 hover:bg-white/10 text-xs text-[#a1a1aa] hover:text-white transition-colors cursor-pointer border border-white/5"
+              >
+                {item.label}
+              </button>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* Conversation Stream */
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 flex flex-col">
+          <div className="w-full max-w-2xl mx-auto space-y-8 flex-1">
+            {turns.map((turn, i) => (
+              <AnswerCard
+                key={i}
+                question={turn.question}
+                response={turn.response}
+                onSelectDocument={onSelectDocument}
+                onSelectImage={onSelectImage}
+              />
+            ))}
+            <div ref={scrollEndRef} />
+          </div>
 
-      <div className="border-border shrink-0 border-t p-4">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit(value);
-          }}
-          className="flex items-end gap-2.5"
-        >
-          <textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submit(value);
-              }
-            }}
-            placeholder="Ask a question about the archive..."
-            rows={1}
-            disabled={disabled}
-            className="border-border bg-background focus:border-foreground/30 focus:ring-foreground/10 max-h-32 min-h-11 flex-1 resize-none rounded-lg border px-3.5 py-2.5 text-[14px] outline-none transition-colors focus:ring-2 disabled:opacity-60"
-          />
-          <button
-            type="submit"
-            disabled={disabled || !value.trim()}
-            aria-label="Ask"
-            className="bg-primary text-primary-foreground flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-sm transition-all hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-          >
-            <SendIcon className="h-4.5 w-4.5" />
-          </button>
-        </form>
-        <p className="text-muted-foreground/70 mt-2.5 text-center font-serif text-[12px] italic">
-          The Archivist can be inaccurate; check the sources shown.
-        </p>
-      </div>
-    </section>
+          <div className="sticky bottom-0 pt-3 pb-4 bg-gradient-to-t from-[#0d0d0f] via-[#0d0d0f]/90 to-transparent backdrop-blur-xs mt-4">
+            <ChatInputBar
+              value={inputValue}
+              onChange={setInputValue}
+              onSubmit={handleSubmit}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

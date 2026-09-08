@@ -1,64 +1,105 @@
 import type { Source } from "@/types/archivist";
 import { TrustBadge } from "@/components/trust-badge";
-import { ScrollIcon } from "@/components/icons";
+import { BookOpen, Image as ImageIcon, Scroll } from "lucide-react";
 
-export function SourcesPanel({ sources }: { sources: Source[] | null }) {
+export function SourcesPanel({
+  sources,
+  onSelectDocument,
+  onSelectImage,
+}: {
+  sources: Source[] | null;
+  onSelectDocument?: (docId: string) => void;
+  onSelectImage?: (imagePath: string) => void;
+}) {
   return (
-    <aside className="card-elevated flex h-full w-72 shrink-0 flex-col overflow-hidden rounded-xl">
-      <div className="border-border flex items-center gap-2 border-b px-5 py-4">
-        <ScrollIcon className="text-muted-foreground h-4.5 w-4.5" />
-        <h2 className="font-serif text-[15px] font-semibold tracking-tight">
-          Sources
-        </h2>
+    <div className="w-full rounded-2xl border border-white/10 bg-[#1e1f20] overflow-hidden flex flex-col">
+      <div className="flex items-center justify-between border-b border-white/5 px-4 py-3 bg-[#18191a]">
+        <div className="flex items-center gap-2 text-white text-xs font-semibold uppercase tracking-wider">
+          <Scroll size={14} className="text-[#7cacf8]" />
+          <span>Retrieved Sources</span>
+        </div>
+        {sources && sources.length > 0 && (
+          <span className="rounded-full bg-white/5 px-2 py-0.5 font-mono text-[10.5px] text-[#9aa0a6]">
+            {sources.length} matched
+          </span>
+        )}
       </div>
-      <div className="scrollbar-thin flex-1 overflow-y-auto p-4">
+
+      <div className="p-3">
         {!sources || sources.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 px-3 py-12 text-center">
-            <span className="border-border bg-muted text-muted-foreground/70 flex h-11 w-11 items-center justify-center rounded-full border">
-              <ScrollIcon className="h-5 w-5" />
-            </span>
-            <p className="text-muted-foreground text-sm leading-relaxed">
-              Sources will appear here once you ask a question.
-            </p>
+          <div className="flex flex-col items-center gap-2 py-8 text-center text-[#9aa0a6]">
+            <Scroll size={24} className="opacity-40" />
+            <p className="text-xs">No active sources loaded.</p>
           </div>
         ) : (
-          <ul className="space-y-3">
+          <ul className="space-y-2.5">
             {sources.map((source, i) => (
               <li
                 key={`${source.title}-${i}`}
-                className="card-elevated rounded-lg p-3.5"
+                onClick={() => onSelectDocument && onSelectDocument(source.title)}
+                className="group cursor-pointer rounded-xl border border-white/5 bg-[#18191a] p-3 transition-all hover:border-white/20"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="font-serif text-[13.5px] leading-snug font-semibold">
-                    {source.title}
+                  <span className="text-xs font-medium text-white group-hover:text-[#7cacf8] transition-colors truncate">
+                    {source.title.replace(/_/g, " ")}
                   </span>
                   {source.category && (
-                    <span className="border-border bg-muted/50 text-muted-foreground rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider">
+                    <span className="rounded bg-white/5 px-1.5 py-0.5 text-[9.5px] font-mono text-[#9aa0a6] uppercase shrink-0">
                       {source.category}
                     </span>
                   )}
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <TrustBadge trust={source.trust} />
                   {source.vector_score !== undefined && source.vector_score !== null && (
-                    <span className="border-border bg-background text-muted-foreground rounded border px-1.5 py-0.5 text-[10.5px] font-mono">
-                      Sim: {source.vector_score.toFixed(3)}
-                    </span>
-                  )}
-                  {source.epistemic_weight !== undefined && (
-                    <span className="border-border bg-background text-muted-foreground rounded border px-1.5 py-0.5 text-[10.5px] font-mono">
-                      Auth: {source.epistemic_weight}
+                    <span className="rounded bg-black/40 px-1.5 py-0.5 text-[10px] font-mono text-[#9aa0a6]">
+                      Sim: {source.vector_score.toFixed(2)}
                     </span>
                   )}
                 </div>
-                <p className="text-muted-foreground mt-2.5 line-clamp-3 text-xs leading-relaxed">
+
+                <p className="text-[#9aa0a6] mt-2 line-clamp-2 text-[11.5px] leading-relaxed">
                   {source.snippet}
                 </p>
+
+                {source.figures && source.figures.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-2">
+                    <span className="text-[10px] text-[#9aa0a6] flex items-center gap-1">
+                      <ImageIcon size={11} /> {source.figures.length} figure{source.figures.length > 1 ? "s" : ""}:
+                    </span>
+                    <div className="flex gap-1 overflow-hidden">
+                      {source.figures.map((fig, figIdx) => (
+                        <button
+                          key={figIdx}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onSelectImage) onSelectImage(fig);
+                          }}
+                          className="h-5 w-5 rounded border border-white/10 bg-black/40 overflow-hidden hover:scale-110 transition-transform shrink-0"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={fig}
+                            alt="thumb"
+                            className="h-full w-full object-contain"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-2 flex items-center justify-end text-[10.5px] text-[#7cacf8] opacity-0 group-hover:opacity-100 transition-opacity gap-1">
+                  <BookOpen size={11} />
+                  <span>Open record</span>
+                </div>
               </li>
             ))}
           </ul>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

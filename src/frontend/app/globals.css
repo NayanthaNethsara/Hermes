@@ -4,7 +4,6 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-serif: var(--font-serif);
   --color-border: var(--border);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -12,26 +11,32 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-  --color-ring: var(--primary);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-ring: var(--ring);
 }
 
-/* Scholarly-archive palette: warm ash charcoal, parchment ink, and a single
-   candlelight-gold accent. Deliberately one theme, not a light/dark pair —
-   this is the product's identity, not a preference. */
 :root {
-  --background: #171513;
-  --foreground: #ece6d9;
-  --card: #1f1c19;
-  --card-foreground: #ece6d9;
-  --muted: #251f1a;
-  --muted-foreground: #a89a86;
-  --primary: #c9973f;
-  --primary-foreground: #211705;
-  --accent: #2a251e;
-  --accent-foreground: #ece6d9;
-  --border: #332c24;
+  --background: #0d0d0f;
+  --foreground: #ededed;
+  --card: #18181b;
+  --card-foreground: #ededed;
+  --muted: #202023;
+  --muted-foreground: #8e8e93;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #18181b;
+  --secondary-foreground: #ededed;
+  --accent: #27272a;
+  --accent-foreground: #ededed;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.08);
+  --ring: #ffffff;
 }
 
 @layer base {
@@ -39,29 +44,28 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground overflow-x-hidden;
+    @apply bg-background text-foreground overflow-x-hidden antialiased;
   }
   html {
     @apply overflow-x-hidden font-sans;
+    color-scheme: dark;
   }
 }
 
-@utility font-serif {
-  font-family: var(--font-serif);
-}
+@utility chip-pill {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: background 0.15s ease, border-color 0.15s ease;
 
-@utility card-elevated {
-  background-color: var(--card);
-  border: 1px solid var(--border);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.24),
-    0 8px 24px -12px rgba(0, 0, 0, 0.45);
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
 }
 
 @utility scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklch, var(--foreground) 14%, transparent)
-    transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 
   &::-webkit-scrollbar {
     width: 6px;
@@ -72,7 +76,7 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background: color-mix(in oklch, var(--foreground) 14%, transparent);
+    background: rgba(255, 255, 255, 0.12);
     border-radius: 9999px;
   }
 }

@@ -52,7 +52,11 @@ CRITIC_SYSTEM_PROMPT = (
     "lairs does not answer whose dominion that place lies in.\n"
     "- The figure descriptions are the archive's own analysis of its plates. For a question about "
     "what an illustration shows or depicts, they are authoritative: if they record the detail, "
-    'the verdict is "answered".'
+    'the verdict is "answered".\n'
+    "- If the question asks for a specific fact (such as a date, year, count, or ruler) and the gathered "
+    "evidence contains direct records for that entity—even if those records present conflicting claims—the "
+    'verdict is "answered". Do not search again to resolve disagreements; the arbitration node handles '
+    "conflicting sources."
 )
 
 EVIDENCE_PREVIEW_CHARS = 600

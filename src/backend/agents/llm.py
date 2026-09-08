@@ -60,7 +60,6 @@ def _build_chat_model(temperature: float) -> BaseChatModel:
 
     if settings.openrouter_api_key:
         from langchain_core.messages import AIMessage, BaseMessage
-        from tenacity import retry, stop_after_attempt, wait_exponential
 
         class OpenRouterChatModel(BaseChatModel):
             model_name: str = settings.openrouter_model

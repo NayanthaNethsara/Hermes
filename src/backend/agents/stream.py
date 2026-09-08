@@ -1,4 +1,4 @@
-from typing import Any, AsyncGenerator
+from typing import AsyncGenerator
 
 from src.backend.agents.service import AgentService, format_sse_event
 

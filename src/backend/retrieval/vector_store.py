@@ -10,7 +10,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Table,
     Text,
     delete,
     func,
@@ -20,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.backend.core.database import Base, get_database_session
+from src.backend.core.database import Base
 from src.backend.core.exceptions import DatabaseUnavailableError, is_connectivity_error
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.schemas import SearchResultChunk

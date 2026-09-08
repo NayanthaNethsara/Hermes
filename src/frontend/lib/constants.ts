@@ -12,6 +12,7 @@ export const API_ENDPOINTS = {
   ASK_STREAM: "/api/ask/stream",
   DOCUMENTS: "/api/documents",
   VISUALS: "/api/visuals",
+  SESSIONS: "/api/sessions",
 } as const;
 
 export const QUERY_CONSTRAINTS = {

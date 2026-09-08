@@ -90,6 +90,25 @@ export interface ChatTurn {
 
 export interface AskQueryPayload {
   question: string;
+  sessionId?: string;
+}
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  updated_at: string | null;
+  turn_count: number;
+}
+
+export interface SessionDetails {
+  id: string;
+  title: string;
+  turns: Array<{
+    question: string;
+    response: HermesResponse;
+  }>;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface ChatInputBarProps {

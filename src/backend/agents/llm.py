@@ -8,8 +8,19 @@ from src.backend.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+_model_cache: dict[float, BaseChatModel] = {}
+
 
 def get_chat_model(temperature: float = 0.1) -> BaseChatModel:
+    if temperature in _model_cache:
+        return _model_cache[temperature]
+
+    model = _build_chat_model(temperature)
+    _model_cache[temperature] = model
+    return model
+
+
+def _build_chat_model(temperature: float) -> BaseChatModel:
     settings = get_settings()
 
     google_api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")

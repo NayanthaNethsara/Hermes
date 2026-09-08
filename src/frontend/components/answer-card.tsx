@@ -1,12 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Check, Copy, Pencil, RefreshCw } from "lucide-react";
 import type { HermesResponse } from "@/types/hermes";
 import { ContradictionBanner } from "@/components/contradiction-banner";
-import { TrustBadge } from "@/components/trust-badge";
-import { cleanWikilinks } from "@/lib/utils";
+import { SourceCard } from "@/components/source-card";
+import {
+  CITATION_LINK_PREFIX,
+  cleanWikilinks,
+  linkifyCitations,
+} from "@/lib/utils";
+
+function AnswerActions({
+  answer,
+  onRegenerate,
+  onEditQuestion,
+}: {
+  answer: string;
+  onRegenerate?: () => void;
+  onEditQuestion?: () => void;
+}) {
+  const [hasCopied, setHasCopied] = useState(false);
+
+  useEffect(() => {
+    if (!hasCopied) return;
+    const timer = setTimeout(() => setHasCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [hasCopied]);
+
+  const copyAnswer = async () => {
+    try {
+      await navigator.clipboard.writeText(answer);
+      setHasCopied(true);
+    } catch {
+      setHasCopied(false);
+    }
+  };
+
+  const actionClass =
+    "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-[#71717a] hover:bg-white/5 hover:text-white transition-colors cursor-pointer";
+
+  return (
+    <div className="flex items-center gap-0.5">
+      <button type="button" onClick={copyAnswer} className={actionClass}>
+        {hasCopied ? <Check size={12} /> : <Copy size={12} />}
+        <span>{hasCopied ? "Copied" : "Copy"}</span>
+      </button>
+
+      {onRegenerate && (
+        <button type="button" onClick={onRegenerate} className={actionClass}>
+          <RefreshCw size={12} />
+          <span>Regenerate</span>
+        </button>
+      )}
+
+      {onEditQuestion && (
+        <button type="button" onClick={onEditQuestion} className={actionClass}>
+          <Pencil size={12} />
+          <span>Edit</span>
+        </button>
+      )}
+    </div>
+  );
+}
 
 function formatFigureCaption(path: string): string {
   const filename = path.split("/").pop() || path;
@@ -26,6 +84,8 @@ export function AnswerCard({
   isStreaming,
   onSelectDocument,
   onSelectImage,
+  onRegenerate,
+  onEditQuestion,
 }: {
   question: string;
   response: HermesResponse | null;
@@ -33,9 +93,35 @@ export function AnswerCard({
   isStreaming?: boolean;
   onSelectDocument?: (docId: string) => void;
   onSelectImage?: (imagePath: string) => void;
+  onRegenerate?: () => void;
+  onEditQuestion?: () => void;
 }) {
   const [showSources, setShowSources] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [highlightedDocId, setHighlightedDocId] = useState<string | null>(null);
+  const sourceRefs = useRef(new Map<string, HTMLDivElement>());
+
+  useEffect(() => {
+    if (!highlightedDocId) return;
+
+    const element = sourceRefs.current.get(highlightedDocId);
+    element?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+    const timer = setTimeout(() => setHighlightedDocId(null), 2200);
+    return () => clearTimeout(timer);
+  }, [highlightedDocId, showSources]);
+
+  const knownDocIds = [
+    ...new Set([
+      ...(response?.citations || []),
+      ...(response?.sources || []).map((source) => source.title),
+    ]),
+  ];
+
+  const revealSource = (docId: string) => {
+    setShowSources(true);
+    setHighlightedDocId(docId);
+  };
 
   const answerText = response?.answer || "";
   const standaloneFigures = (response?.referenced_figures || []).filter((figureUrl) => {
@@ -161,6 +247,31 @@ export function AnswerCard({
                       {children}
                     </code>
                   ),
+                  a: ({ href, children }) => {
+                    if (typeof href === "string" && href.startsWith(CITATION_LINK_PREFIX)) {
+                      const docId = href.slice(CITATION_LINK_PREFIX.length);
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => revealSource(docId)}
+                          title={`Jump to ${docId}`}
+                          className="mx-0.5 rounded bg-white/10 px-1.5 py-px align-baseline font-mono text-[11px] text-[#a1a1aa] hover:bg-white/20 hover:text-white transition-colors cursor-pointer"
+                        >
+                          {children}
+                        </button>
+                      );
+                    }
+                    return (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white underline underline-offset-2 hover:text-white/80"
+                      >
+                        {children}
+                      </a>
+                    );
+                  },
                   img: ({ src, alt }) => (
                     <span
                       role="button"
@@ -199,7 +310,9 @@ export function AnswerCard({
                   ),
                 }}
               >
-                {response?.answer ? cleanWikilinks(response.answer) : ""}
+                {response?.answer
+                  ? linkifyCitations(cleanWikilinks(response.answer), knownDocIds)
+                  : ""}
               </ReactMarkdown>
               {isStreaming && response?.answer && (
                 <span className="inline-block w-1.5 h-3.5 ml-1 bg-white/70 animate-pulse align-middle" />
@@ -250,9 +363,9 @@ export function AnswerCard({
                     <button
                       key={index}
                       type="button"
-                      onClick={() => onSelectDocument && onSelectDocument(cite)}
+                      onClick={() => revealSource(cite)}
                       className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-[11px] font-mono text-[#a1a1aa] hover:text-white transition-colors cursor-pointer"
-                      title="View document record"
+                      title="Jump to this source"
                     >
                       {cite}
                     </button>
@@ -283,89 +396,32 @@ export function AnswerCard({
               </div>
             </div>
 
+            {!isStreaming && response?.answer && (
+              <div className="-mt-1">
+                <AnswerActions
+                  answer={response.answer}
+                  onRegenerate={onRegenerate}
+                  onEditQuestion={onEditQuestion}
+                />
+              </div>
+            )}
+
             {showSources && response?.sources && response.sources.length > 0 && (
-              <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2.5 text-xs">
+              <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2.5">
                 {response.sources.map((src, i) => (
                   <div
-                    key={i}
-                    onClick={() => onSelectDocument && onSelectDocument(src.title)}
-                    className="p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors cursor-pointer space-y-1.5 border border-white/5"
+                    key={src.chunk_id || i}
+                    ref={(element) => {
+                      if (element) sourceRefs.current.set(src.title, element);
+                      else sourceRefs.current.delete(src.title);
+                    }}
+                    className={`rounded-lg transition-shadow ${
+                      highlightedDocId === src.title
+                        ? "ring-2 ring-white/40"
+                        : "ring-0"
+                    }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-white text-[12px] truncate">
-                        {src.title.replace(/_/g, " ")}
-                      </span>
-                      <TrustBadge trust={src.trust} />
-                    </div>
-                    <div className="text-[#a1a1aa] leading-relaxed text-[11.5px]">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          h1: ({ children }) => (
-                            <h4 className="text-[12px] font-semibold text-white mt-1 mb-0.5">
-                              {children}
-                            </h4>
-                          ),
-                          h2: ({ children }) => (
-                            <h5 className="text-[11.5px] font-semibold text-white mt-1 mb-0.5">
-                              {children}
-                            </h5>
-                          ),
-                          h3: ({ children }) => (
-                            <h6 className="text-[11px] font-medium text-[#e4e4e7] mt-0.5 mb-0.5">
-                              {children}
-                            </h6>
-                          ),
-                          p: ({ children }) => (
-                            <div className="mb-1 last:mb-0 leading-relaxed text-[#a1a1aa]">
-                              {children}
-                            </div>
-                          ),
-                          strong: ({ children }) => (
-                            <strong className="font-medium text-white">
-                              {children}
-                            </strong>
-                          ),
-                          ul: ({ children }) => (
-                            <ul className="my-1 list-disc pl-4 space-y-0.5 text-[11px]">
-                              {children}
-                            </ul>
-                          ),
-                          ol: ({ children }) => (
-                            <ol className="my-1 list-decimal pl-4 space-y-0.5 text-[11px]">
-                              {children}
-                            </ol>
-                          ),
-                          li: ({ children }) => (
-                            <li className="leading-relaxed">{children}</li>
-                          ),
-                          table: ({ children }) => (
-                            <div className="my-1.5 overflow-x-auto rounded border border-white/10 bg-black/20">
-                              <table className="w-full border-collapse text-left text-[11px]">
-                                {children}
-                              </table>
-                            </div>
-                          ),
-                          th: ({ children }) => (
-                            <th className="border-b border-white/10 bg-white/5 px-2.5 py-1 font-medium text-white">
-                              {children}
-                            </th>
-                          ),
-                          td: ({ children }) => (
-                            <td className="border-b border-white/5 px-2.5 py-1 text-[#a1a1aa] last:border-b-0">
-                              {children}
-                            </td>
-                          ),
-                          code: ({ children }) => (
-                            <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10.5px] text-white">
-                              {children}
-                            </code>
-                          ),
-                        }}
-                      >
-                        {cleanWikilinks(src.snippet.replace(/!\[.*?\]\(.*?\)/g, ""))}
-                      </ReactMarkdown>
-                    </div>
+                    <SourceCard source={src} onSelectDocument={onSelectDocument} />
                   </div>
                 ))}
               </div>

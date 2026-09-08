@@ -51,19 +51,20 @@ async def get_document_details(
     doc_id: str,
     session: AsyncSession = Depends(get_database_session),
 ) -> dict[str, Any]:
+    clean_doc_id = doc_id.split("|")[0].strip()
     query = (
         select(DocumentChunkModel)
-        .where(DocumentChunkModel.doc_id == doc_id)
+        .where(DocumentChunkModel.doc_id == clean_doc_id)
         .order_by(DocumentChunkModel.chunk_id)
     )
     result = await session.execute(query)
     chunks = result.scalars().all()
     if not chunks:
-        raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found")
+        raise HTTPException(status_code=404, detail=f"Document '{clean_doc_id}' not found")
 
     first_meta = chunks[0].metadata_payload or {}
     return {
-        "doc_id": doc_id,
+        "doc_id": clean_doc_id,
         "source_category": first_meta.get("source_category", "unknown"),
         "epistemic_weight": first_meta.get("epistemic_weight", 0.5),
         "total_chunks": len(chunks),

@@ -31,7 +31,7 @@ async def plan_search_queries(state: ConversationalInvestigatorState) -> dict[st
 
     if len(messages) <= 1:
         steps.append({
-            "step": 2,
+            "step": len(steps) + 1,
             "action": "Contextual Query Planning",
             "found": f"Initial standalone research query planned: '{root_query}'",
         })
@@ -87,7 +87,7 @@ async def plan_search_queries(state: ConversationalInvestigatorState) -> dict[st
 
     queries_display = ", ".join(f"'{q}'" for q in planned_queries)
     steps.append({
-        "step": 2,
+        "step": len(steps) + 1,
         "action": "Contextual Query Planning",
         "found": f"Resolved conversational pronouns against dialogue history into: {queries_display}",
     })

@@ -29,6 +29,7 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
     chunks = state.get("verified_chunks") or state.get("active_chunks") or state.get("retrieved_context", [])
     figure_urls = state.get("active_figures") or state.get("figure_urls") or state.get("figures", [])
     existing_contradictions = state.get("contradictions", [])
+    unresolved_gap = "" if state.get("is_sufficient") else state.get("knowledge_gap", "")
 
     citations = list(dict.fromkeys([chunk.doc_id for chunk in chunks]))
     context_str = build_synthesis_context(chunks)
@@ -46,6 +47,7 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
             root_query=root_query,
             context_str=context_str,
             figures_str=figures_str,
+            knowledge_gap=unresolved_gap,
         )
 
     llm = get_chat_model(temperature=0.1)
@@ -85,9 +87,11 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
         syn_detail = f"Synthesized answer citing {len(citations)} authoritative source(s) [{cited_str}]"
         if actual_referenced_figures:
             syn_detail += f" with {len(actual_referenced_figures)} inline visual plate(s)"
+        if unresolved_gap:
+            syn_detail += f"; disclosed unresolved gap: {unresolved_gap}"
 
     steps.append({
-        "step": 5,
+        "step": len(steps) + 1,
         "action": "Evidence Synthesis",
         "found": syn_detail,
     })

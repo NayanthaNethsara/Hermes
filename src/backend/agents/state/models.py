@@ -22,6 +22,12 @@ class ConversationalInvestigatorState(TypedDict, total=False):
     session_summary: str
     is_conversational: bool
     planned_queries: list[str]
+    searched_queries: list[str]
+
+    iteration_count: int
+    max_iterations: int
+    is_sufficient: bool
+    knowledge_gap: str
 
     active_chunks: list[SearchResultChunk]
     active_figures: list[str]
@@ -39,9 +45,6 @@ class ConversationalInvestigatorState(TypedDict, total=False):
     figures: list[str]
     figure_urls: list[str]
     facts: list[FactRecord]
-    iteration_count: int
-    max_iterations: int
-    is_sufficient: bool
 
 
 AgentState = ConversationalInvestigatorState

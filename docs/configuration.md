@@ -72,11 +72,24 @@ Paths are resolved relative to the repository root.
 |---|---|---|
 | `RETRIEVAL_CANDIDATE_LIMIT` | `50` | Candidates pulled from hybrid RRF search |
 | `RERANK_SCORE_THRESHOLD` | `0.50` | Minimum rerank score to stay in the running |
-| `RERANK_TOP_K` | `5` | Chunks handed to the synthesizer |
-| `MAX_SEARCH_HOPS` | `5` | Upper bound on investigator iterations |
+| `RERANK_TOP_K` | `5` | Chunks kept per search query |
+| `SYNTHESIS_CONTEXT_LIMIT` | `10` | Upper bound on passages handed to the synthesizer, across all hops |
+| `MAX_SEARCH_HOPS` | `2` | Search hops per question, and the main lever on the model call budget |
 
 Raising `RERANK_SCORE_THRESHOLD` trades recall for precision; if answers start
 reporting no evidence, lower it before anything else.
+
+`MAX_SEARCH_HOPS` costs one extra model call per hop beyond the first: 2 hops
+is at most 5 calls per question, 3 hops at most 6. On a free-tier quota, set it
+against the per-minute limit rather than as high as it will go. The per-request
+`max_iterations` is clamped to this value, so a client cannot exceed it.
+
+`SYNTHESIS_CONTEXT_LIMIT` bounds tokens rather than calls. Each hop can add up
+to `RERANK_TOP_K` passages per search query, so a multi-hop question would
+otherwise grow the answer prompt without limit. When the gathered evidence
+exceeds this number it is reranked once against the original question and
+trimmed. That rerank is a Voyage call, not a language model call, so it does
+not count against the model budget.
 
 ## Source authority weights
 

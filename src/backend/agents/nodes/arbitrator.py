@@ -6,7 +6,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.backend.agents.llm import get_chat_model
 from src.backend.agents.state.models import ConversationalInvestigatorState
+from src.backend.core.config import get_settings
 from src.backend.core.logging import get_logger
+from src.backend.retrieval.reranker import CrossEncoderReranker
+from src.backend.retrieval.schemas import SearchResultChunk
 
 logger = get_logger("arbitrator")
 
@@ -24,13 +27,26 @@ ARBITRATOR_SYSTEM_PROMPT = (
 )
 
 
+async def consolidate_multi_hop_evidence(
+    root_query: str,
+    chunks: list[SearchResultChunk],
+    limit: int,
+) -> list[SearchResultChunk]:
+    try:
+        reranker = CrossEncoderReranker(min_score=0.0)
+        return await reranker.rerank(query=root_query, candidates=chunks, top_k=limit)
+    except Exception as error:
+        logger.warning("cross_hop_consolidation_fallback", error=str(error))
+        return chunks[:limit]
+
+
 async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str, Any]:
     active_chunks = state.get("active_chunks", [])
     steps = list(state.get("reasoning_steps", []))
 
     if not active_chunks:
         steps.append({
-            "step": 4,
+            "step": len(steps) + 1,
             "action": "Epistemic Source Arbitration",
             "found": "Skipped — no evidence chunks retrieved to evaluate",
         })
@@ -39,6 +55,27 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
             "contradictions": [],
             "reasoning_steps": steps,
         }
+
+    consolidated_figures: list[str] | None = None
+    context_limit = get_settings().synthesis_context_limit
+    if len(active_chunks) > context_limit:
+        gathered_count = len(active_chunks)
+        active_chunks = await consolidate_multi_hop_evidence(
+            root_query=state.get("root_query", ""),
+            chunks=active_chunks,
+            limit=context_limit,
+        )
+        consolidated_figures = list(
+            dict.fromkeys(fig for chunk in active_chunks for fig in chunk.figure_references)
+        )
+        steps.append({
+            "step": len(steps) + 1,
+            "action": "Evidence Consolidation",
+            "found": (
+                f"Ranked {gathered_count} passage(s) gathered across hops against the original "
+                f"question and kept the top {len(active_chunks)}"
+            ),
+        })
 
     sorted_chunks = sorted(
         active_chunks,
@@ -49,12 +86,16 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
         reverse=True,
     )
 
+    figures_update = (
+        {"active_figures": consolidated_figures} if consolidated_figures is not None else {}
+    )
+
     weights = [float((c.metadata_payload or {}).get("epistemic_weight", 0.5)) for c in sorted_chunks]
     has_mixed_authority = len(set(weights)) > 1 and min(weights) < 0.8
 
     if not has_mixed_authority and not state.get("contradictions"):
         steps.append({
-            "step": 4,
+            "step": len(steps) + 1,
             "action": "Epistemic Source Arbitration",
             "found": f"Evaluated {len(sorted_chunks)} records; uniform authority detected — 0 contradictions found",
         })
@@ -62,6 +103,7 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
             "verified_chunks": sorted_chunks,
             "contradictions": [],
             "reasoning_steps": steps,
+            **figures_update,
         }
 
     snippets: list[str] = []
@@ -108,7 +150,7 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
         summary = f"Arbitrated {len(sorted_chunks)} records; canon claims reconciled without active conflict"
 
     steps.append({
-        "step": 4,
+        "step": len(steps) + 1,
         "action": "Epistemic Source Arbitration",
         "found": summary,
     })
@@ -117,4 +159,5 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
         "verified_chunks": sorted_chunks,
         "contradictions": contradictions,
         "reasoning_steps": steps,
+        **figures_update,
     }

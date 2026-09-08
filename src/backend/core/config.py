@@ -71,7 +71,8 @@ class Settings(BaseSettings):
         default=50, alias="RETRIEVAL_CANDIDATE_LIMIT"
     )
     rerank_top_k: int = Field(default=5, alias="RERANK_TOP_K")
-    max_search_iterations: int = Field(default=5, alias="MAX_SEARCH_HOPS")
+    synthesis_context_limit: int = Field(default=10, alias="SYNTHESIS_CONTEXT_LIMIT")
+    max_search_iterations: int = Field(default=2, alias="MAX_SEARCH_HOPS")
 
     weight_codex: float = Field(default=1.0, alias="WEIGHT_CODEX")
     weight_image: float = Field(default=1.0, alias="WEIGHT_IMAGE")

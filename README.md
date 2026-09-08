@@ -69,6 +69,7 @@ Step-by-step instructions and troubleshooting: [docs/setup.md](docs/setup.md).
 | [docs/api.md](docs/api.md) | HTTP and SSE reference, plus the Swagger and OpenAPI links |
 | [docs/setup.md](docs/setup.md) | Local install, ingestion, running, troubleshooting |
 | [docs/configuration.md](docs/configuration.md) | Every environment variable and its default |
+| [docs/submission_report.md](docs/submission_report.md) | Final competition submission report (5-page structure) |
 | [AGENTS.md](AGENTS.md) | Engineering conventions for this repository |
 | [ai_usage/ai-usage-disclosure.md](ai_usage/ai-usage-disclosure.md) | AI models, development tools, and governance disclosure |
 

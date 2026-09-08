@@ -11,7 +11,7 @@ from src.backend.agents.prompts import (
     build_synthesis_context,
     build_synthesis_user_prompt,
 )
-from src.backend.agents.state.models import ConversationalInvestigatorState
+from src.backend.agents.state.models import ANSWERED, ConversationalInvestigatorState
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.visuals import asset_url, describe_available_figures
 
@@ -31,7 +31,9 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
     chunks = state.get("verified_chunks") or state.get("active_chunks") or state.get("retrieved_context", [])
     figure_urls = state.get("active_figures") or state.get("figure_urls") or state.get("figures", [])
     existing_contradictions = state.get("contradictions", [])
-    unresolved_gap = "" if state.get("is_sufficient") else state.get("knowledge_gap", "")
+    unresolved_gap = (
+        "" if state.get("evidence_verdict") == ANSWERED else state.get("knowledge_gap", "")
+    )
 
     citations = list(dict.fromkeys([chunk.doc_id for chunk in chunks]))
     context_str = build_synthesis_context(chunks)

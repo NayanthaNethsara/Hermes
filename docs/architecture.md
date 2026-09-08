@@ -70,8 +70,8 @@ flowchart LR
     GR -->|research query| PL["Planner"]
     PL --> RT["Retriever"]
     RT --> CR["Critic"]
-    CR -->|"gap found, hops left"| RT
-    CR -->|"sufficient or budget spent"| AR["Arbitrator"]
+    CR -->|"search_again, hops left"| RT
+    CR -->|"answered / not_in_archive / budget spent"| AR["Arbitrator"]
     AR --> SY
     SY --> FIN(("end"))
 ```
@@ -109,25 +109,47 @@ cross-encoder. Details in section 3.
 
 ### Critic
 
-`agents/nodes/critic.py`. Receives the question, the searches already run, and
-a short digest of the evidence gathered so far, and returns
-`{is_sufficient, missing_information, next_queries}`.
+`agents/nodes/critic.py`. Receives the question, the searches already run, how
+many passages the last search actually added, and a digest of the evidence
+gathered so far. It returns one of three verdicts:
 
-- **Sufficient** routes to the arbitrator and the answer is written.
-- **Insufficient** routes back to the retriever with `next_queries`, which the
-  critic phrases to target the named gap and to differ from searches already
-  run. The gap is kept in `knowledge_gap`.
-- **At the hop cap** the critic skips its model call entirely, since the route
-  out is forced regardless of what it would say.
+| Verdict | Meaning | Route |
+|---|---|---|
+| `answered` | The evidence answers the question in substance | Arbitrator |
+| `search_again` | A named fact is genuinely missing and another wording could find it | Retriever, with the critic's own `next_queries` |
+| `not_in_archive` | The evidence is on topic but the archive does not record this | Arbitrator |
 
-When the loop exits with a gap still open, `knowledge_gap` reaches the
-synthesizer, which states what it could not find instead of guessing.
+`not_in_archive` is what keeps a hopeless search from burning the budget. The
+critic is told to prefer it over another hop when the last search added little
+or drifted off topic, and the answer then says what the archive does not hold
+rather than implying the search simply stopped early.
+
+The critic judges substance, not wording. A passage describing what a plate
+depicts answers a question about what that plate shows, even when it never uses
+the asker's term. Without that rule the critic litigates synonyms and spends
+hops confirming phrasing it already has.
+
+**What the critic can see matters more than the prompt.** It reads a digest,
+not the full evidence, and the digest strips ingestion boilerplate — asset
+paths, file names, empty section markers, inline image links — before taking
+the first `EVIDENCE_PREVIEW_CHARS` of each passage. Image chunks open with a
+metadata header, so without that stripping the critic would see a title and a
+file path where the description of the plate should be, and would keep
+searching for something already in front of it.
+
+At the hop cap the critic skips its model call entirely, since the route out is
+forced regardless of what it would say. Failures and unparseable replies fall
+through to `answered`, so a critic problem costs an answer's thoroughness
+rather than the answer itself.
 
 Hops are capped by `MAX_SEARCH_HOPS`, and the per-request `max_iterations` is
 clamped to it so a client cannot raise the ceiling. Counters reset in the
 guardrail on every turn, so a question starts its own investigation rather than
 inheriting the previous turn's hop count and evidence. Continuity between turns
 comes from the message history and the session summary, which the planner uses.
+
+When the loop ends on anything but `answered`, `knowledge_gap` reaches the
+synthesizer, which states what it could not find instead of guessing.
 
 ### Arbitrator
 

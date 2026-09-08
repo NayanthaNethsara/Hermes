@@ -6,6 +6,11 @@ from pydantic import BaseModel, Field
 
 from src.backend.retrieval.schemas import SearchResultChunk
 
+ANSWERED = "answered"
+SEARCH_AGAIN = "search_again"
+NOT_IN_ARCHIVE = "not_in_archive"
+VALID_VERDICTS = {ANSWERED, SEARCH_AGAIN, NOT_IN_ARCHIVE}
+
 
 class FactRecord(BaseModel):
     fact: str
@@ -26,7 +31,8 @@ class ConversationalInvestigatorState(TypedDict, total=False):
 
     iteration_count: int
     max_iterations: int
-    is_sufficient: bool
+    last_hop_yield: int
+    evidence_verdict: str
     knowledge_gap: str
 
     active_chunks: list[SearchResultChunk]

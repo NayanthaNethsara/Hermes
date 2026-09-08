@@ -10,7 +10,7 @@ from src.backend.agents.nodes.guardrail import guardrail_input
 from src.backend.agents.nodes.planner import plan_search_queries
 from src.backend.agents.nodes.retriever import retrieve_evidence
 from src.backend.agents.nodes.synthesizer import synthesize_answer
-from src.backend.agents.state.models import ConversationalInvestigatorState
+from src.backend.agents.state.models import SEARCH_AGAIN, ConversationalInvestigatorState
 from src.backend.core.config import get_settings
 from src.backend.core.database import get_connection_pool
 from src.backend.core.logging import get_logger
@@ -37,7 +37,7 @@ def build_unified_graph(checkpointer=None):
         return "planner"
 
     def route_after_critic(state: ConversationalInvestigatorState) -> str:
-        if state.get("is_sufficient"):
+        if state.get("evidence_verdict") != SEARCH_AGAIN:
             return "arbitrator"
         max_hops = state.get("max_iterations") or get_settings().max_search_iterations
         if state.get("iteration_count", 0) >= max_hops:

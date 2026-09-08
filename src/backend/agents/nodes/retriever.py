@@ -144,6 +144,7 @@ async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
         "figures": unique_figures,
         "figure_urls": unique_figures,
         "iteration_count": iteration,
+        "last_hop_yield": len(new_chunks),
         "searched_queries": searched_queries,
         "reasoning_steps": steps,
     }

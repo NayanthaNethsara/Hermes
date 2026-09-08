@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 
@@ -22,20 +23,23 @@ HERMES_SYSTEM_INSTRUCTION = (
     "illustration shows. Embed several if several earn it, embed none if none do. A figure the "
     "reader does not need is worse than no figure at all.\n"
     "Embed with markdown, copying the path exactly as listed: ![caption](/assets/filename.png)\n"
-    "The caption is shown to the reader underneath the image, so write what the plate shows and "
-    "why it matters here, as a short phrase. Never use 'image', 'figure' or the filename as the "
-    "caption. Embed any given figure at most once.\n"
+    "The caption is shown to the reader underneath the image, and the interface truncates it, so "
+    "keep it to at most twelve words. Write your own short label naming the subject and the "
+    "detail that matters; never paste the figure description, and never use 'image', 'figure' or "
+    "the filename. Embed any given figure at most once, and write nothing after it that repeats "
+    "what the caption already said.\n"
     "\n"
     "FORMATTING\n"
     "Write clean Markdown. The renderer supports headings, bold, bullet and numbered lists, "
     "tables, blockquotes and inline code.\n"
     "- Lead with the direct answer in one or two sentences. Do not open with a heading.\n"
     "- Add '## ' headings only when the answer is long enough to need sections.\n"
-    "- Put numeric readings, dates, counts or ratings in a table once you report more than two.\n"
+    "- Use a table only for three or more rows of comparable values. A single reading belongs in "
+    "the sentence, never in a one-row table.\n"
     "- Use `inline code` for exact identifiers, and bold for the figure that answers the question.\n"
     "- Cite sources by the document name shown in brackets above each evidence block. Do not add "
     "a sources list; the interface shows sources separately.\n"
-    "- After embedding a figure, do not restate its caption as a sentence.\n"
+
     "- Never emit [[double bracket]] wikilinks, raw HTML, or a level-one '# ' heading.\n"
     "- Do not narrate your own search process or mention retrieval, chunks or evidence blocks."
 )
@@ -46,6 +50,50 @@ GREETING_INSTRUCTION = (
     "the places where sources contradict one another, then invite a question. "
     "Use no headings, no lists and no markdown formatting."
 )
+
+
+NOISE_PREFIXES = ("**File**:", "**Asset Path**:", "**Source File**:")
+NOISE_LINES = {
+    "no inscribed text detected.",
+    "no legible text found.",
+    "no extracted figures.",
+}
+
+
+def condense_for_review(content: str) -> str:
+    kept: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(NOISE_PREFIXES):
+            continue
+        if line.lower() in NOISE_LINES:
+            continue
+        line = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", line).strip()
+        if not line:
+            continue
+        line = line.lstrip("#").strip()
+        if line.startswith("Visual Asset:"):
+            continue
+        if line:
+            kept.append(line)
+    return " ".join(kept)
+
+
+ARBITRATION_SNIPPET_CHARS = 420
+MAX_ARBITRATION_ITEMS = 6
+
+
+def build_arbitration_snippets(chunks: list[Any]) -> str:
+    snippets: list[str] = []
+    for chunk in chunks[:MAX_ARBITRATION_ITEMS]:
+        metadata = chunk.metadata_payload or {}
+        category = str(metadata.get("source_category", "unknown")).upper()
+        weight = metadata.get("epistemic_weight", 0.5)
+        body = condense_for_review(chunk.content)[:ARBITRATION_SNIPPET_CHARS]
+        snippets.append(f"[{chunk.doc_id} | {category} | Authority {weight}]\n{body}")
+    return "\n---\n".join(snippets)
 
 
 def build_synthesis_context(chunks: list[Any]) -> str:

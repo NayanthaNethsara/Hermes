@@ -21,6 +21,7 @@ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.backend.core.database import Base, get_database_session
+from src.backend.core.exceptions import DatabaseUnavailableError, is_connectivity_error
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.schemas import SearchResultChunk
 
@@ -201,6 +202,14 @@ class PostgresVectorStore:
             return search_results
 
         except Exception as error:
+            if is_connectivity_error(error):
+                # An outage must not read as "the archive holds no evidence".
+                logger.warning(
+                    "sql_rrf_hybrid_search_database_unavailable",
+                    error_detail=str(error),
+                )
+                raise DatabaseUnavailableError() from error
+
             logger.warning(
                 "sql_rrf_hybrid_search_failed_returning_empty",
                 error_detail=str(error),

@@ -7,6 +7,7 @@ from sqlalchemy import delete, desc, select
 
 from src.backend.agents.llm import get_chat_model
 from src.backend.core.database import ChatSessionModel, session_scope
+from src.backend.core.exceptions import summarize_error
 from src.backend.core.logging import get_logger
 from src.backend.core.redis import redis_delete, redis_get_json, redis_set_json
 
@@ -38,7 +39,7 @@ async def generate_concise_title(session_id: str, first_question: str) -> None:
                 logger.info("session_title_updated", session_id=session_id, title=title)
                 await redis_delete("cache:sessions:list")
     except Exception as error:
-        logger.warning("session_title_generation_failed", error=str(error))
+        logger.warning("session_title_generation_failed", error=summarize_error(error))
 
 
 async def update_session_summary_in_background(session_id: str, turns: list[dict[str, Any]]) -> None:
@@ -81,10 +82,27 @@ async def update_session_summary_in_background(session_id: str, turns: list[dict
         await graph.aupdate_state(config, {"session_summary": summary})
         logger.info("session_summary_updated", session_id=session_id)
     except Exception as error:
-        logger.warning("session_summary_update_failed", error=str(error))
+        logger.warning("session_summary_update_failed", error=summarize_error(error))
 
 
 async def upsert_session(
+    session_id: str,
+    question: str,
+    response_payload: dict[str, Any],
+) -> None:
+    """Persist one turn. Never raises: an answer already produced for the
+    caller must not be lost to a database or cache outage."""
+    try:
+        await persist_session_turn(session_id, question, response_payload)
+    except Exception as error:
+        logger.warning(
+            "session_history_persist_failed",
+            session_id=session_id,
+            error=summarize_error(error),
+        )
+
+
+async def persist_session_turn(
     session_id: str,
     question: str,
     response_payload: dict[str, Any],

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.backend.agents.router import router as agents_router
 from src.backend.core.config import get_settings
-from src.backend.core.database import init_database
+from src.backend.core.database import check_database_health, close_database, init_database
 from src.backend.core.exceptions import register_exception_handlers
 from src.backend.core.logging import configure_logging, get_logger
 from src.backend.core.rate_limit import RateLimitMiddleware
@@ -27,11 +27,19 @@ OPENAPI_TAGS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("hermes_backend_starting_up")
+    # Neither check aborts startup: the API stays up and reports the outage per
+    # request, so a stopped container does not require a backend restart.
     await init_database()
+    database_healthy = await check_database_health()
     redis_healthy = await check_redis_health()
-    logger.info("redis_health_status", healthy=redis_healthy)
+    logger.info(
+        "dependency_health_status",
+        database=database_healthy,
+        redis=redis_healthy,
+    )
     yield
     await close_redis_client()
+    await close_database()
     logger.info("hermes_backend_shutting_down")
 
 
@@ -74,10 +82,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health", tags=["system"], summary="Service health")
     async def health_check() -> dict[str, str]:
+        database_healthy = await check_database_health()
         redis_healthy = await check_redis_health()
         return {
-            "status": "ok",
+            "status": "ok" if database_healthy and redis_healthy else "degraded",
             "service": "hermes-backend",
+            "database": "connected" if database_healthy else "unavailable",
             "redis": "connected" if redis_healthy else "unavailable",
         }
 

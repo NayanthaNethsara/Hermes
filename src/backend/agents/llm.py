@@ -8,6 +8,8 @@ from src.backend.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+LLM_TIMEOUT_SECONDS = 120.0
+
 _model_cache: dict[float, BaseChatModel] = {}
 
 
@@ -32,7 +34,7 @@ def _build_chat_model(temperature: float) -> BaseChatModel:
             kwargs: dict[str, Any] = {
                 "model": settings.gemini_model,
                 "temperature": temperature,
-                "automatic_function_calling_config": {"disable": True},
+                "timeout": LLM_TIMEOUT_SECONDS,
             }
 
             if google_api_key:

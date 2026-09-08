@@ -23,9 +23,9 @@ class CrossEncoderReranker:
         self.client = voyageai.Client(api_key=self.api_key) if self.api_key else None
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1.5, min=2, max=15),
-        retry=retry_if_exception_type(Exception),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1.0, min=1, max=5),
+        retry=retry_if_exception_type(ModelInferenceError),
         reraise=True,
     )
     async def rerank(
@@ -41,10 +41,12 @@ class CrossEncoderReranker:
             logger.warning("voyage_api_key_not_configured_returning_top_candidates_without_rerank")
             return candidates[:top_k]
 
-        document_texts = [candidate.content for candidate in candidates]
+        document_texts = [candidate.content for candidate in candidates[:25]]
 
         try:
-            result = self.client.rerank(
+            import asyncio
+            result = await asyncio.to_thread(
+                self.client.rerank,
                 query=query,
                 documents=document_texts,
                 model=self.model,
@@ -67,13 +69,11 @@ class CrossEncoderReranker:
 
         if not reranked_chunks and ranked_items:
             highest_score = float(ranked_items[0].relevance_score)
-            logger.warning(
-                "all_candidates_below_threshold",
+            logger.info(
+                "candidates_below_rerank_threshold_using_top_hybrid",
                 highest_score=highest_score,
                 threshold=self.min_score,
             )
-            raise RetrievalThresholdError(
-                f"Candidate confidence {highest_score:.2f} is below required threshold {self.min_score:.2f}"
-            )
+            return candidates[:top_k]
 
         return reranked_chunks[:top_k]

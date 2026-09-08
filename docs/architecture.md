@@ -175,6 +175,17 @@ score low against the original wording, and figures are narrowed to the
 passages that survive. The rerank is a Voyage call, so it adds no language
 model call; if it fails the pool is simply truncated.
 
+The evidence it compares is condensed the same way the critic's is. Without
+that, an image chunk arrives as a filename, an asset path and the title the
+ingestion vision pass invented for the plate, and the only thing left to
+compare between two sources is what they are called. That is how a plate
+titled "Gauntlet of the Serpent" and a wiki article named
+`gauntlet_of_sorrowfell` get reported as a disagreement about the artifact's
+official name. Identifiers, slugs and plate titles are cataloguing labels
+rather than claims, and the prompt now says so explicitly, alongside the other
+non-contradictions: silence, differing detail, different subjects, and
+synonyms.
+
 It then sorts the retrieved chunks by authority weight and
 then relevance. It calls the model only when the evidence actually spans
 different authority levels, that is when at least two distinct weights are

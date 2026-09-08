@@ -12,6 +12,7 @@ from src.backend.agents.state.models import (
     VALID_VERDICTS,
     ConversationalInvestigatorState,
 )
+from src.backend.agents.prompts import condense_for_review
 from src.backend.core.config import get_settings
 from src.backend.core.logging import get_logger
 from src.backend.retrieval.visuals import describe_available_figures
@@ -23,7 +24,7 @@ CRITIC_SYSTEM_PROMPT = (
     "You receive a question, the searches already run, and the evidence gathered so far. Decide "
     "whether the archive has yielded enough to answer.\n"
     "Output ONLY a valid JSON object matching this schema:\n"
-    '{"verdict": "answered", "missing_information": "string", "next_queries": ["string"]}\n'
+    '{"analysis": "string", "verdict": "answered", "missing_information": "string", "next_queries": ["string"]}\n'
     "\n"
     "VERDICTS\n"
     '- "answered": the evidence answers the question in substance. Judge substance, not wording. '
@@ -37,12 +38,18 @@ CRITIC_SYSTEM_PROMPT = (
     "topic; a further search would only add noise.\n"
     "\n"
     "RULES\n"
+    "- 'analysis' MUST be concise: at most 1-2 brief sentences (under 30 words) summarizing "
+    "what link is confirmed or missing.\n"
     "- 'missing_information' names the absent fact for the two negative verdicts, and is an empty "
     "string for \"answered\".\n"
     "- 'next_queries' holds 1 or 2 searches for \"search_again\" only, each worded differently "
     "from the searches already run. It is an empty list for the other verdicts.\n"
     "- Do not answer the question yourself, and never require a source to repeat the question's "
     "phrasing.\n"
+    "- When the question asks for a link between things (whose, which faction, who won, what "
+    "connects one to another) and the evidence establishes only one end of that link, the verdict "
+    'is "search_again" and the next query must name the missing end. Learning where a creature '
+    "lairs does not answer whose dominion that place lies in.\n"
     "- The figure descriptions are the archive's own analysis of its plates. For a question about "
     "what an illustration shows or depicts, they are authoritative: if they record the detail, "
     'the verdict is "answered".'
@@ -50,35 +57,6 @@ CRITIC_SYSTEM_PROMPT = (
 
 EVIDENCE_PREVIEW_CHARS = 600
 MAX_EVIDENCE_ITEMS = 6
-
-NOISE_PREFIXES = ("**File**:", "**Asset Path**:", "**Source File**:")
-NOISE_LINES = {
-    "no inscribed text detected.",
-    "no legible text found.",
-    "no extracted figures.",
-}
-
-
-def condense_for_review(content: str) -> str:
-    kept: list[str] = []
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith(NOISE_PREFIXES):
-            continue
-        if line.lower() in NOISE_LINES:
-            continue
-        line = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", line).strip()
-        if not line:
-            continue
-        line = line.lstrip("#").strip()
-        if line.startswith("Visual Asset:"):
-            continue
-        if line:
-            kept.append(line)
-    return " ".join(kept)
-
 
 def build_evidence_digest(chunks: list[Any]) -> str:
     if not chunks:
@@ -104,7 +82,10 @@ async def assess_sufficiency(state: ConversationalInvestigatorState) -> dict[str
             "action": "Sufficiency Review",
             "found": f"Search budget of {max_hops} hop(s) reached — answering with the evidence in hand",
         })
-        return {"reasoning_steps": steps}
+        return {
+            "evidence_verdict": "budget_exhausted",
+            "reasoning_steps": steps,
+        }
 
     queries_run = state.get("searched_queries", [])
     last_hop_yield = state.get("last_hop_yield", len(chunks))
@@ -120,6 +101,7 @@ async def assess_sufficiency(state: ConversationalInvestigatorState) -> dict[str
 
     verdict = ANSWERED
     knowledge_gap = ""
+    analysis = ""
     next_queries: list[str] = []
 
     try:
@@ -135,6 +117,7 @@ async def assess_sufficiency(state: ConversationalInvestigatorState) -> dict[str
         if json_match:
             parsed = json.loads(json_match.group(0))
             if isinstance(parsed, dict):
+                analysis = str(parsed.get("analysis", "")).strip()
                 candidate = str(parsed.get("verdict", ANSWERED)).strip().lower()
                 verdict = candidate if candidate in VALID_VERDICTS else ANSWERED
                 knowledge_gap = str(parsed.get("missing_information", "")).strip()
@@ -152,14 +135,20 @@ async def assess_sufficiency(state: ConversationalInvestigatorState) -> dict[str
         next_queries = []
 
     if verdict == ANSWERED:
-        detail = f"Evidence answers the question after {hops_used} hop(s) — no further search needed"
+        detail = (
+            f"Evidence answers the question after {hops_used} hop(s) [{analysis}]"
+            if analysis
+            else f"Evidence answers the question after {hops_used} hop(s) — no further search needed"
+        )
     elif verdict == NOT_IN_ARCHIVE:
         detail = (
             f"The archive does not appear to record {knowledge_gap or 'this detail'} — "
             "answering with what it does hold rather than searching further"
         )
     else:
-        detail = f"Gap identified: {knowledge_gap or 'an unresolved detail'}. Searching again for: {', '.join(next_queries)}"
+        detail = (
+            f"Gap identified ({analysis or knowledge_gap}). Searching again for: {', '.join(next_queries)}"
+        )
 
     steps.append({
         "step": len(steps) + 1,

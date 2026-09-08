@@ -1,4 +1,5 @@
-from typing import Optional
+import asyncio
+import time
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -13,12 +14,20 @@ from src.backend.agents.nodes.synthesizer import synthesize_answer
 from src.backend.agents.state.models import SEARCH_AGAIN, ConversationalInvestigatorState
 from src.backend.core.config import get_settings
 from src.backend.core.database import get_connection_pool
+from src.backend.core.exceptions import summarize_error
 from src.backend.core.logging import get_logger
 
 logger = get_logger("workflow")
 
 _cached_graph = None
+_cached_graph_checkpointer = None
 _cached_checkpointer = None
+_checkpointer_is_fallback = False
+_checkpointer_retry_after = 0.0
+_checkpointer_lock = asyncio.Lock()
+
+# While degraded, retry Postgres at most this often instead of on every request.
+CHECKPOINTER_RETRY_COOLDOWN_SECONDS = 15.0
 
 
 def build_unified_graph(checkpointer=None):
@@ -58,28 +67,47 @@ def build_unified_graph(checkpointer=None):
 
 
 async def get_checkpointer():
-    global _cached_checkpointer
-    if _cached_checkpointer is not None:
+    """Postgres-backed checkpointer, degrading to in-memory when it is down.
+
+    The in-memory saver is never cached as final: every later call retries
+    Postgres, so the graph upgrades itself once the database is reachable again.
+    """
+    global _cached_checkpointer, _checkpointer_is_fallback, _checkpointer_retry_after
+
+    if _cached_checkpointer is not None and not _checkpointer_is_fallback:
         return _cached_checkpointer
 
-    try:
-        pool = await get_connection_pool()
-        checkpointer = AsyncPostgresSaver(pool)
-        await checkpointer.setup()
-        _cached_checkpointer = checkpointer
-        logger.info("postgres_checkpointer_initialized_successfully")
-        return _cached_checkpointer
-    except Exception as error:
-        logger.warning("postgres_checkpointer_failed_using_memory_saver", error=str(error))
-        _cached_checkpointer = MemorySaver()
+    async with _checkpointer_lock:
+        if _cached_checkpointer is not None and not _checkpointer_is_fallback:
+            return _cached_checkpointer
+        if _cached_checkpointer is not None and time.monotonic() < _checkpointer_retry_after:
+            return _cached_checkpointer
+
+        try:
+            pool = await get_connection_pool()
+            checkpointer = AsyncPostgresSaver(pool)
+            await checkpointer.setup()
+            _cached_checkpointer = checkpointer
+            _checkpointer_is_fallback = False
+            logger.info("postgres_checkpointer_initialized_successfully")
+        except Exception as error:
+            logger.warning(
+                "postgres_checkpointer_failed_using_memory_saver",
+                error=summarize_error(error),
+            )
+            if _cached_checkpointer is None or not _checkpointer_is_fallback:
+                _cached_checkpointer = MemorySaver()
+            _checkpointer_is_fallback = True
+            _checkpointer_retry_after = time.monotonic() + CHECKPOINTER_RETRY_COOLDOWN_SECONDS
+
         return _cached_checkpointer
 
 
 async def get_compiled_graph():
-    global _cached_graph
-    if _cached_graph is not None:
-        return _cached_graph
+    global _cached_graph, _cached_graph_checkpointer
 
     checkpointer = await get_checkpointer()
-    _cached_graph = build_unified_graph(checkpointer=checkpointer)
+    if _cached_graph is None or _cached_graph_checkpointer is not checkpointer:
+        _cached_graph = build_unified_graph(checkpointer=checkpointer)
+        _cached_graph_checkpointer = checkpointer
     return _cached_graph

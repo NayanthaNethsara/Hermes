@@ -17,21 +17,6 @@ logger = get_logger("retriever")
 async def retrieve_evidence(state: AgentState) -> dict[str, Any]:
     steps = list(state.get("reasoning_steps", []))
 
-    if state.get("is_conversational"):
-        steps.append({
-            "step": 3,
-            "action": "Hybrid Archive Retrieval",
-            "found": "Search bypassed — conversational greeting fast-path",
-        })
-        return {
-            "active_chunks": [],
-            "active_figures": [],
-            "retrieved_context": [],
-            "figures": [],
-            "figure_urls": [],
-            "reasoning_steps": steps,
-        }
-
     search_query = state.get("search_query") or state.get("root_query", "")
     planned_queries = state.get("planned_queries") or state.get("search_queries", [])
     queries_to_run = planned_queries if planned_queries else ([search_query] if search_query else [])

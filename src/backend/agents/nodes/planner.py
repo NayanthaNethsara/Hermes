@@ -29,18 +29,6 @@ async def plan_search_queries(state: ConversationalInvestigatorState) -> dict[st
 
     steps = list(state.get("reasoning_steps", []))
 
-    if state.get("is_conversational"):
-        steps.append({
-            "step": 2,
-            "action": "Contextual Query Planning",
-            "found": "Conversational intent active — search formulation skipped",
-        })
-        return {
-            "search_query": root_query,
-            "planned_queries": [],
-            "reasoning_steps": steps,
-        }
-
     if len(messages) <= 1:
         steps.append({
             "step": 2,

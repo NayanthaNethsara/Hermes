@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { askArchivist, ArchivistApiError } from "@/lib/api";
 import { ChatPanel, type ChatTurn } from "@/components/chat-panel";
-import { SourcesPanel } from "@/components/sources-panel";
-import { ReasoningTracePanel } from "@/components/reasoning-trace-panel";
-import { FlameIcon } from "@/components/icons";
+import { DocumentModal } from "@/components/document-modal";
+import { ImageLightbox } from "@/components/image-lightbox";
 
 export function ArchivistApp() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [isThinking, setIsThinking] = useState(false);
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [selectedImagePath, setSelectedImagePath] = useState<string | null>(null);
 
   const handleSubmit = async (question: string) => {
     setTurns((prev) => [...prev, { question, response: null }]);
@@ -42,30 +43,57 @@ export function ArchivistApp() {
     }
   };
 
-  const latestAnswered = [...turns].reverse().find((t) => t.response);
-  const latestResponse = latestAnswered?.response ?? null;
+  const handleReset = () => {
+    setTurns([]);
+  };
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
-      <header className="border-border flex shrink-0 items-center gap-3 border-b px-6 py-4">
-        <span className="border-border text-muted-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
-          <FlameIcon className="h-4.5 w-4.5" />
-        </span>
-        <div>
-          <h1 className="font-serif text-[19px] leading-none font-semibold tracking-tight">
-            The Archivist
-          </h1>
-          <p className="text-muted-foreground mt-1 text-[12px] tracking-wide">
-            Ashen Era Archive research assistant
-          </p>
+    <div className="flex h-screen w-screen flex-col bg-[#0d0d0f] text-[#ededed] overflow-hidden">
+      {/* Minimal Header */}
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/5 px-4 sm:px-6 bg-[#0d0d0f]/80 backdrop-blur-xs z-10">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[13.5px] font-medium tracking-tight text-white">
+            Hermes
+          </span>
+          <span className="text-[11px] text-[#71717a] font-normal">
+            by TheKade
+          </span>
         </div>
+
+        {turns.length > 0 && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="text-xs text-[#8e8e93] hover:text-white transition-colors cursor-pointer"
+          >
+            New chat
+          </button>
+        )}
       </header>
 
-      <div className="flex min-h-0 flex-1 gap-5 overflow-hidden p-5">
-        <SourcesPanel sources={latestResponse?.sources ?? null} />
-        <ChatPanel turns={turns} onSubmit={handleSubmit} disabled={isThinking} />
-        <ReasoningTracePanel steps={latestResponse?.reasoning_steps ?? null} />
-      </div>
+      {/* Main Content */}
+      <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
+        <ChatPanel
+          turns={turns}
+          onSubmit={handleSubmit}
+          disabled={isThinking}
+          onSelectDocument={(docId) => setSelectedDocId(docId)}
+          onSelectImage={(img) => setSelectedImagePath(img)}
+        />
+      </main>
+
+      {/* Document Inspector Modal */}
+      <DocumentModal
+        docId={selectedDocId}
+        onClose={() => setSelectedDocId(null)}
+        onSelectImage={(img) => setSelectedImagePath(img)}
+      />
+
+      {/* Visual Lightbox */}
+      <ImageLightbox
+        imagePath={selectedImagePath}
+        onClose={() => setSelectedImagePath(null)}
+      />
     </div>
   );
 }

@@ -1,8 +1,9 @@
-import type { ArchivistResponse } from "@/types/archivist";
+import type {
+  ArchivistResponse,
+  DocumentDetails,
+  VisualCatalogItem,
+} from "@/types/archivist";
 
-// Falls back to the FastAPI backend's default local port only for
-// zero-config local dev — the base URL always comes from
-// NEXT_PUBLIC_API_URL when it's set (see .env.local.example).
 const DEFAULT_API_URL = "http://localhost:8000";
 
 function getApiBaseUrl(): string {
@@ -11,7 +12,6 @@ function getApiBaseUrl(): string {
 
 export class ArchivistApiError extends Error {}
 
-/** Call the backend's POST /api/ask with `question` and return its response. */
 export async function askArchivist(question: string): Promise<ArchivistResponse> {
   let response: Response;
   try {
@@ -37,4 +37,36 @@ export async function askArchivist(question: string): Promise<ArchivistResponse>
   }
 
   return data as ArchivistResponse;
+}
+
+export async function fetchDocumentDetails(docId: string): Promise<DocumentDetails> {
+  const cleanId = docId.replace(/^\d+$/, "").trim() || docId;
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/documents/${cleanId}`);
+  } catch {
+    throw new ArchivistApiError(`Could not reach backend to load document ${cleanId}`);
+  }
+
+  if (!response.ok) {
+    throw new ArchivistApiError(`Document '${cleanId}' could not be loaded.`);
+  }
+
+  return response.json();
+}
+
+export async function fetchVisualDetails(filename: string): Promise<VisualCatalogItem> {
+  const cleanName = filename.split("/").pop() || filename;
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/visuals/${cleanName}`);
+  } catch {
+    throw new ArchivistApiError(`Could not reach backend to load visual asset ${cleanName}`);
+  }
+
+  if (!response.ok) {
+    throw new ArchivistApiError(`Visual asset '${cleanName}' could not be loaded.`);
+  }
+
+  return response.json();
 }

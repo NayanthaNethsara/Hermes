@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { fetchVisualDetails } from "@/lib/api";
 import type { VisualCatalogItem } from "@/types/hermes";
 import { X, Image as ImageIcon } from "lucide-react";
+import { useModalFocus } from "@/lib/use-modal-focus";
 
 export function ImageLightbox({
   imagePath,
@@ -14,6 +15,7 @@ export function ImageLightbox({
 }) {
   const [details, setDetails] = useState<VisualCatalogItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const dialogRef = useModalFocus<HTMLDivElement>(Boolean(imagePath), onClose);
 
   useEffect(() => {
     if (!imagePath) return;
@@ -33,15 +35,10 @@ export function ImageLightbox({
 
     void loadVisual();
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
       isCancelled = true;
-      window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [imagePath, onClose]);
+  }, [imagePath]);
 
   if (!imagePath) return null;
 
@@ -55,7 +52,14 @@ export function ImageLightbox({
         onClick={onClose}
       />
 
-      <div className="card-elevated relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl lg:flex-row">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="image-lightbox-title"
+        tabIndex={-1}
+        className="card-elevated relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl outline-none lg:flex-row"
+      >
         <div className="relative flex flex-1 items-center justify-center bg-background/90 p-4 sm:p-6">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -76,6 +80,8 @@ export function ImageLightbox({
             <button
               type="button"
               onClick={onClose}
+              aria-label="Close visual plate inspector"
+              data-autofocus
               className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             >
               <X size={18} />
@@ -84,7 +90,10 @@ export function ImageLightbox({
 
           <div className="scrollbar-thin flex-1 overflow-y-auto p-5 space-y-5">
             <div>
-              <h2 className="font-serif text-[18px] font-semibold leading-snug text-foreground capitalize">
+              <h2
+                id="image-lightbox-title"
+                className="font-serif text-[18px] font-semibold leading-snug text-foreground capitalize"
+              >
                 {displayTitle}
               </h2>
               <p className="mt-1 font-mono text-[11px] text-muted-foreground break-all">

@@ -29,19 +29,19 @@ def compute_file_hash(file_path: Path) -> str:
     return hasher.hexdigest()
 
 
-def infer_source_category(file_path: Path) -> tuple[SourceCategory, float]:
+def infer_source_category(file_path: Path) -> SourceCategory:
     path_string = str(file_path).lower()
     if "codex" in path_string:
-        return SourceCategory.CODEX, EpistemicWeight.CODEX.value
+        return SourceCategory.CODEX
     if "wiki" in path_string:
-        return SourceCategory.WIKI, EpistemicWeight.WIKI.value
+        return SourceCategory.WIKI
     if "chronicles" in path_string or "novel" in path_string or "book" in path_string:
-        return SourceCategory.NOVEL, EpistemicWeight.NOVEL.value
+        return SourceCategory.NOVEL
     if "ephemera" in path_string or "letter" in path_string or "ledger" in path_string:
-        return SourceCategory.EPHEMERA, EpistemicWeight.EPHEMERA.value
+        return SourceCategory.EPHEMERA
     if file_path.suffix.lower() in [".png", ".jpg", ".jpeg"]:
-        return SourceCategory.IMAGE, EpistemicWeight.CODEX.value
-    return SourceCategory.UNKNOWN, EpistemicWeight.UNKNOWN.value
+        return SourceCategory.IMAGE
+    return SourceCategory.UNKNOWN
 
 
 def generate_image_description(filename: str) -> str:
@@ -85,9 +85,9 @@ def build_plate_registry(archive_dir: Path) -> tuple[dict[str, str], dict[str, s
 
 class DocumentParser:
     def __init__(self, output_assets_dir: Path | None = None) -> None:
-        settings = get_settings()
-        self.archive_dir = settings.raw_archive_dir
-        self.output_assets_dir = output_assets_dir or settings.extracted_assets_dir
+        self.settings = get_settings()
+        self.archive_dir = self.settings.raw_archive_dir
+        self.output_assets_dir = output_assets_dir or self.settings.extracted_assets_dir
         self.output_assets_dir.mkdir(parents=True, exist_ok=True)
         self.vision_analyzer = VisionAnalyzer()
         self.catalog_path = self.output_assets_dir / "visual_catalog.json"
@@ -130,7 +130,8 @@ class DocumentParser:
             raise DocumentParsingError(f"File not found: {file_path}")
 
         file_hash = compute_file_hash(file_path)
-        category, weight = infer_source_category(file_path)
+        category = infer_source_category(file_path)
+        weight = self.settings.get_epistemic_weight(category.value)
         metadata = DocumentMetadata(
             doc_id=file_path.stem,
             file_hash=file_hash,

@@ -56,6 +56,22 @@ class Settings(BaseSettings):
     rerank_top_k: int = Field(default=5, alias="RERANK_TOP_K")
     max_search_iterations: int = Field(default=5, alias="MAX_SEARCH_HOPS")
 
+    weight_codex: float = Field(default=1.0, alias="WEIGHT_CODEX")
+    weight_image: float = Field(default=1.0, alias="WEIGHT_IMAGE")
+    weight_wiki: float = Field(default=0.8, alias="WEIGHT_WIKI")
+    weight_novel: float = Field(default=0.6, alias="WEIGHT_NOVEL")
+    weight_ephemera: float = Field(default=0.4, alias="WEIGHT_EPHEMERA")
+
+    def get_epistemic_weight(self, source_category: str) -> float:
+        category_weights = {
+            "codex": self.weight_codex,
+            "image": self.weight_image,
+            "wiki": self.weight_wiki,
+            "novel": self.weight_novel,
+            "ephemera": self.weight_ephemera,
+        }
+        return category_weights.get(source_category.lower(), 0.5)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

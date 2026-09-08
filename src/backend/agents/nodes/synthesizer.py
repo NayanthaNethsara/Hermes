@@ -30,8 +30,11 @@ async def synthesize_answer(state: AgentState) -> dict[str, Any]:
     for index, chunk in enumerate(chunks):
         doc_id = chunk.doc_id
         citations.append(doc_id)
+        payload = chunk.metadata_payload or {}
+        category = payload.get("source_category", "archive").upper()
+        weight = float(payload.get("epistemic_weight", 1.0))
         context_blocks.append(
-            f"[Source {index + 1}: {doc_id} (Score: {chunk.relevance_score:.2f})]\n{chunk.content}"
+            f"[Source {index + 1}: {doc_id} | Category: {category} (Authority: {weight:.1f})]\n{chunk.content}"
         )
 
     context_str = "\n\n---\n\n".join(context_blocks)
@@ -40,9 +43,15 @@ async def synthesize_answer(state: AgentState) -> dict[str, Any]:
     system_instruction = (
         "You are the Archivist AI, an expert technical and historical assistant for the Ashen Era Archive.\n"
         "Your task is to provide rich, accurate answers strictly grounded in the provided document evidence.\n"
+        "Adhere strictly to the epistemic authority hierarchy:\n"
+        "- CODEX and IMAGE plates represent supreme canon (official threat ratings, gauges, attunement costs, garrisons).\n"
+        "- WIKI records provide consensus lore and registry overviews.\n"
+        "- NOVEL chronicles provide narrative perspectives.\n"
+        "- EPHEMERA records (letters, trial transcripts, ballads) are subjective claims.\n"
+        "If sources conflict on a fact (e.g. year, victor, or count), uphold the higher-tier source as canon and report the disagreement.\n"
         "If a diagram, figure, or table asset is available, mention and embed it directly.\n"
         "Output ONLY a valid JSON object matching this schema:\n"
-        '{"answer": "string", "referenced_figures": ["string"], "citations": ["string"]}'
+        '{"answer": "string", "referenced_figures": ["string"], "citations": ["string"], "contradictions": [{"topic": "string", "sources_disagree": ["string"]}]}'
     )
 
     user_prompt = (
@@ -69,6 +78,7 @@ async def synthesize_answer(state: AgentState) -> dict[str, Any]:
         answer = parsed.get("answer", content_text)
         refs = parsed.get("referenced_figures", figure_urls)
         cits = parsed.get("citations", list(set(citations)))
+        contradictions = parsed.get("contradictions", [])
     except Exception:
         answer = (
             f"Based on the archive evidence:\n\n"
@@ -76,9 +86,11 @@ async def synthesize_answer(state: AgentState) -> dict[str, Any]:
         )
         refs = figure_urls
         cits = list(set(citations))
+        contradictions = []
 
     return {
         "final_answer": answer,
         "referenced_figures": refs,
         "citations": cits,
+        "contradictions": contradictions,
     }

@@ -22,6 +22,7 @@ class AgentRunResponse(BaseModel):
     iteration_count: int = 0
     sources: list[dict[str, Any]] = Field(default_factory=list)
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
+    contradictions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AskRequest(BaseModel):
@@ -54,9 +55,11 @@ async def run_agent_track(
 
     sources_list: list[dict[str, Any]] = []
     for chunk in final_state.get("retrieved_context", []):
+        meta = chunk.metadata_payload or {}
+        cat = meta.get("source_category", "")
         sources_list.append({
             "title": chunk.doc_id,
-            "trust": "high" if chunk.relevance_score > 0.6 else "medium",
+            "trust": "high" if cat in ["codex", "image"] or chunk.relevance_score > 0.7 else "medium",
             "snippet": chunk.content[:250],
         })
 
@@ -72,6 +75,7 @@ async def run_agent_track(
         iteration_count=final_state.get("iteration_count", 1),
         sources=sources_list,
         reasoning_steps=reasoning_steps,
+        contradictions=final_state.get("contradictions", []),
     )
 
 

@@ -89,6 +89,35 @@ async def process_document(
     return len(chunks)
 
 
+def select_canonical_documents(file_paths: list[Path]) -> list[Path]:
+    def format_preference(path: Path) -> int:
+        suffix = path.suffix.lower()
+        if suffix == ".md":
+            return 0
+        if suffix == ".docx":
+            return 1
+        if suffix == ".pdf":
+            return 2
+        if suffix == ".txt":
+            return 3
+        return 4
+
+    grouped: dict[str, list[Path]] = {}
+    for path in file_paths:
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            key = f"img_{path.name}"
+        else:
+            key = path.stem
+        grouped.setdefault(key, []).append(path)
+
+    canonical_files: list[Path] = []
+    for files in grouped.values():
+        files.sort(key=format_preference)
+        canonical_files.append(files[0])
+
+    return canonical_files
+
+
 async def run_ingestion_pipeline(
     archive_dir: Path | None = None,
     folder_filter: str | None = None,
@@ -121,7 +150,8 @@ async def run_ingestion_pipeline(
             p for p in all_files if any(folder in p.parts for folder in folders)
         ]
 
-    # Prioritize visual figures plates and wiki lore first
+    all_files = select_canonical_documents(all_files)
+
     def sort_priority(path: Path) -> int:
         parts = [p.lower() for p in path.parts]
         if "images" in parts:

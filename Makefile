@@ -72,6 +72,10 @@ db:
 db-down:
 	docker compose stop db
 
+db-clean:
+	docker compose down -v
+	docker compose up -d db
+
 backend:
 	$(UVICORN) src.backend.main:app --reload --host $(HOST) --port $(PORT)
 

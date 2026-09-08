@@ -11,7 +11,7 @@ from src.backend.ingestion.schemas import (
 
 
 class DocumentChunker:
-    def __init__(self, target_chunk_size: int = 800, chunk_overlap: int = 100) -> None:
+    def __init__(self, target_chunk_size: int = 1200, chunk_overlap: int = 150) -> None:
         self.target_chunk_size = target_chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -51,8 +51,17 @@ class DocumentChunker:
                         )
                     )
                     chunk_sequence += 1
-                    current_buffer = [paragraph]
-                    current_length = paragraph_length
+                    overlap_paragraph = (
+                        current_buffer[-1]
+                        if len(current_buffer) > 1 and len(current_buffer[-1]) <= self.chunk_overlap * 2
+                        else None
+                    )
+                    if overlap_paragraph:
+                        current_buffer = [overlap_paragraph, paragraph]
+                        current_length = len(overlap_paragraph) + paragraph_length
+                    else:
+                        current_buffer = [paragraph]
+                        current_length = paragraph_length
                 else:
                     current_buffer.append(paragraph)
                     current_length += paragraph_length
@@ -93,15 +102,17 @@ class DocumentChunker:
             return [("General", text)]
 
         sections: list[tuple[str, str]] = []
-        current_title = "Introduction"
-        current_body = splits[0]
-        if current_body.strip():
-            sections.append((current_title, current_body))
+        preamble = splits[0].strip()
 
         for i in range(1, len(splits), 2):
             header = splits[i].lstrip("#").strip()
             body = splits[i + 1] if i + 1 < len(splits) else ""
+            if i == 1 and preamble:
+                body = f"{preamble}\n\n{body}" if body.strip() else preamble
             sections.append((header, body))
+
+        if not sections and preamble:
+            sections.append(("General", preamble))
 
         return sections
 

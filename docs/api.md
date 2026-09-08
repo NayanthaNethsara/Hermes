@@ -85,8 +85,9 @@ finishes.
     {"step": 1, "action": "Input Guardrail & Intent Classification", "found": "..."},
     {"step": 2, "action": "Contextual Query Planning", "found": "..."},
     {"step": 3, "action": "Hybrid Archive Retrieval", "found": "..."},
-    {"step": 4, "action": "Epistemic Source Arbitration", "found": "..."},
-    {"step": 5, "action": "Evidence Synthesis", "found": "..."}
+    {"step": 4, "action": "Sufficiency Review", "found": "..."},
+    {"step": 5, "action": "Epistemic Source Arbitration", "found": "..."},
+    {"step": 6, "action": "Evidence Synthesis", "found": "..."}
   ],
   "contradictions": [
     {"topic": "Forging year of the artifact", "sources_disagree": ["codex_vol2", "ballad_7"]}
@@ -112,7 +113,7 @@ its first question yet; the frontend treats it as an empty conversation.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/documents/{doc_id}` | Document metadata plus every chunk in order |
+| GET | `/api/documents/{doc_id}` | Document metadata plus chunks in order (category suffixes such as `\| CODEX` sanitized automatically) |
 | GET | `/api/visuals/{filename}` | Catalog entry for one extracted visual asset |
 | GET | `/assets/{path}` | The extracted asset files themselves, served statically |
 
@@ -141,7 +142,7 @@ vector, keyword and rerank scores.
 ### GET /api/health
 
 ```json
-{"status": "ok", "service": "hermes-backend", "redis": "connected"}
+{"status": "ok", "service": "hermes-backend", "database": "connected", "redis": "connected"}
 ```
 
 `redis` is `unavailable` when the cache is down. That is not a failure state;

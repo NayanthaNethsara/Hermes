@@ -13,17 +13,23 @@ disagree rather than a silently chosen winner.
 
 A question runs through a LangGraph pipeline with conditional routing:
 
-```
-                                +---- gap found -----+
-                                v                    |
-User -> Guardrail -> Planner -> Retriever -> Critic -+-> Arbitrator -> Synthesizer -> User
-        \__________________________ greeting __________________________/
+```mermaid
+flowchart LR
+    User([User]) --> Guardrail{"Guardrail"}
+    Guardrail -->|"greeting"| Synthesizer["Synthesizer"]
+    Guardrail -->|"research query"| Planner["Planner"]
+    Planner --> Retriever["Retriever"]
+    Retriever --> Critic{"Critic"}
+    Critic -->|"gap found (hops left)"| Retriever
+    Critic -->|"answered / not in archive"| Arbitrator["Arbitrator"]
+    Arbitrator --> Synthesizer
+    Synthesizer --> Output([Answer to User])
 ```
 
 | Node | Responsibility |
 |---|---|
 | Guardrail | Regex intent check; greetings skip retrieval entirely |
-| Planner | Rewrites follow-up questions into standalone queries using dialogue history |
+| Planner | Decomposes multi-hop queries, resolves dialogue history, and generates targeted hybrid queries |
 | Retriever | Hybrid pgvector and full-text search fused with RRF, cross-encoder rerank, Redis cache |
 | Critic | Judges whether the evidence answers the question, whether another search would help, or whether the archive simply lacks it |
 | Arbitrator | Sorts evidence by authority and detects factual contradictions |
@@ -64,6 +70,7 @@ Step-by-step instructions and troubleshooting: [docs/setup.md](docs/setup.md).
 | [docs/setup.md](docs/setup.md) | Local install, ingestion, running, troubleshooting |
 | [docs/configuration.md](docs/configuration.md) | Every environment variable and its default |
 | [AGENTS.md](AGENTS.md) | Engineering conventions for this repository |
+| [ai_usage/ai-usage-disclosure.md](ai_usage/ai-usage-disclosure.md) | AI models, development tools, and governance disclosure |
 
 ## Repository layout
 

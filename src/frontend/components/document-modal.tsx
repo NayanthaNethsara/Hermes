@@ -7,6 +7,7 @@ import { fetchDocumentDetails } from "@/lib/api";
 import type { DocumentDetails } from "@/types/hermes";
 import { BookOpen, X, Image as ImageIcon } from "lucide-react";
 import { cleanWikilinks } from "@/lib/utils";
+import { useModalFocus } from "@/lib/use-modal-focus";
 
 export function DocumentModal({
   docId,
@@ -20,6 +21,7 @@ export function DocumentModal({
   const [doc, setDoc] = useState<DocumentDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useModalFocus<HTMLDivElement>(Boolean(docId), onClose);
 
   useEffect(() => {
     if (!docId) return;
@@ -42,15 +44,10 @@ export function DocumentModal({
 
     void loadDocument();
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
       isCancelled = true;
-      window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [docId, onClose]);
+  }, [docId]);
 
   if (!docId) return null;
 
@@ -63,7 +60,14 @@ export function DocumentModal({
         onClick={onClose}
       />
 
-      <div className="card-elevated relative z-10 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="document-modal-title"
+        tabIndex={-1}
+        className="card-elevated relative z-10 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl outline-none"
+      >
         <div className="flex items-center justify-between border-b border-border px-6 py-4 bg-muted/20">
           <div className="flex items-center gap-3">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-primary">
@@ -71,7 +75,10 @@ export function DocumentModal({
             </span>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-serif text-[17px] font-semibold text-foreground capitalize">
+                <h2
+                  id="document-modal-title"
+                  className="font-serif text-[17px] font-semibold text-foreground capitalize"
+                >
                   {displayTitle}
                 </h2>
                 {doc && (
@@ -93,6 +100,8 @@ export function DocumentModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close document"
+            data-autofocus
             className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
           >
             <X size={18} />

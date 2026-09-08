@@ -29,6 +29,20 @@ services:
       timeout: 5s
       retries: 5
 
+  db-ui:
+    image: sosedoff/pgweb:latest
+    container_name: archivist-db-ui
+    ports:
+      - "8081:8081"
+    environment:
+      - PGWEB_DATABASE_URL=postgres://postgres:postgres@db:5432/archivist?sslmode=disable
+      - PGWEB_LOCK_SESSION=true
+    command: ["--bind=0.0.0.0", "--listen=8081"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   backend:
     build:
       context: ./src/backend

@@ -19,20 +19,46 @@
 .
 ├── .env
 ├── Makefile
+├── docker-compose.yml
 ├── ai_usage/
 ├── configuration-example/
 ├── data/
-├── docker-compose.yml
 ├── docs/
+│   ├── architecture.md
+│   ├── user-flows.md
+│   ├── SETUP.md
+│   ├── TESTING_GUIDE.md
+│   ├── decisions.md
+│   ├── limitations.md
+│   └── diagrams/
 ├── sample_questions.json
 ├── sample_questions_1b_1c.json
 └── src/
     ├── backend/
     │   ├── Dockerfile
     │   ├── pyproject.toml
-    │   └── requirements.txt
+    │   ├── requirements.txt
+    │   ├── main.py
+    │   ├── agents/
+    │   │   ├── graphs/workflow.py
+    │   │   ├── nodes/ (guardrail, planner, retriever, arbitrator, synthesizer)
+    │   │   ├── state/models.py
+    │   │   ├── llm.py
+    │   │   ├── prompts.py
+    │   │   ├── service.py
+    │   │   └── sessions.py
+    │   ├── core/ (config, database, redis, rate_limit, logging)
+    │   ├── ingestion/
+    │   └── retrieval/ (vector_store, reranker, schemas)
     └── frontend/
         ├── Dockerfile
-        └── package.json
+        ├── package.json
+        ├── app/
+        │   ├── page.tsx (redirect → /chat)
+        │   └── chat/
+        │       ├── page.tsx (new session)
+        │       └── [sessionId]/page.tsx (existing session)
+        ├── components/ (hermes-app, chat-panel, chat-sidebar, answer-card, ...)
+        └── lib/ (api, constants, validation)
 ```
 

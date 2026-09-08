@@ -1,14 +1,13 @@
-# Technical Architecture — The Archivist
+# Technical Architecture — The Archivist (Hermes)
 
 **Sub-track:** 1C — Searching the Way a Human Does (primary)
-**Also addresses:** 1B — Connecting Facts Across Thousands of Pages (secondary, via the knowledge graph)
-**This file belongs at:** `docs/architecture.md`
+**Also addresses:** 1B — Connecting Facts Across Thousands of Pages (secondary)
 
 ---
 
 ## 1. Overview
 
-The Archivist answers questions over the Ashen Era Archive by running a loop of three small agents (Planner, Critic, Synthesizer) on top of a retrieval layer (vector search + knowledge graph). It keeps searching until it has enough evidence, and it explicitly flags when sources disagree instead of silently picking one. That trust/contradiction handling is the project's core differentiator — everything else in this doc supports it.
+The Archivist answers questions over the Ashen Era Archive using a LangGraph agent pipeline backed by PostgreSQL (pgvector for hybrid retrieval), Redis (caching + rate limiting), and Gemini (via `langchain-google-genai`). The system plans searches, reranks results with a cross-encoder, detects contradictions across an epistemic authority hierarchy, and streams answers via Server-Sent Events.
 
 ---
 
@@ -16,165 +15,243 @@ The Archivist answers questions over the Ashen Era Archive by running a loop of 
 
 ```mermaid
 flowchart TD
-    subgraph Client
-        FE[Web Frontend - React]
-        TG[Telegram Bot]
+    subgraph Client["Client Layer"]
+        FE["Next.js Frontend<br/>(App Router, SSE)"]
     end
 
-    subgraph Backend["Backend API - FastAPI"]
-        ORCH[Orchestrator]
-        PLAN[Planner Agent]
-        CRIT[Critic Agent]
-        SYN[Synthesizer Agent]
+    subgraph Backend["Backend API — FastAPI"]
+        MW["Rate Limit Middleware<br/>(Redis sliding window)"]
+        SVC["Agent Service<br/>(SSE streaming)"]
+
+        subgraph Graph["LangGraph Agent Pipeline"]
+            GR["Guardrail<br/>(regex intent classifier)"]
+            PL["Planner<br/>(query rewriter)"]
+            RT["Retriever<br/>(hybrid search + reranker)"]
+            AR["Arbitrator<br/>(contradiction detector)"]
+            SY["Synthesizer<br/>(answer generator)"]
+        end
     end
 
-    subgraph Retrieval["Retrieval Layer"]
-        VEC[(Chroma - Vector DB)]
-        GRAPH[(NetworkX - Knowledge Graph)]
-        TRUST[Trust Tagger]
+    subgraph Data["Data Layer"]
+        PG[("PostgreSQL<br/>pgvector + sessions")]
+        RD[("Redis<br/>cache + rate limits")]
+        VY["Voyage AI<br/>(embeddings)"]
+        GM["Gemini<br/>(LLM)"]
     end
 
-    subgraph Offline["Offline - runs once before the demo"]
-        ING[Ingestion Script]
-        GBUILD[Graph Builder Script]
-        CORPUS[(Ashen Era Archive - 415 docs)]
+    subgraph Offline["Offline Pipeline (run once)"]
+        ING["Ingestion Script"]
+        CORPUS[("Ashen Era Archive<br/>415 docs")]
     end
 
-    FE --> ORCH
-    TG --> ORCH
-    ORCH --> PLAN
-    PLAN --> VEC
-    PLAN --> GRAPH
-    VEC --> TRUST
-    GRAPH --> TRUST
-    TRUST --> CRIT
-    CRIT -->|not enough / conflict| PLAN
-    CRIT -->|enough evidence| SYN
-    SYN --> ORCH
-    ORCH --> FE
-    ORCH --> TG
+    FE -->|"POST /api/ask/stream"| MW --> SVC
+    SVC --> GR
 
-    CORPUS --> ING --> VEC
-    CORPUS --> GBUILD --> GRAPH
+    GR -->|"is_conversational=true"| SY
+    GR -->|"is_conversational=false"| PL
+    PL --> RT
+    RT --> AR
+    AR --> SY
+
+    RT -->|"embed query"| VY
+    RT -->|"hybrid search"| PG
+    RT <-->|"retrieval cache"| RD
+
+    PL -->|"rewrite query"| GM
+    AR -->|"detect contradictions"| GM
+    SY -->|"generate answer"| GM
+
+    SY -->|"SSE tokens"| FE
+    SVC -->|"persist session"| PG
+
+    CORPUS --> ING -->|"chunks + embeddings"| PG
 ```
 
 ---
 
-## 3. Request Flow (one question, step by step)
+## 3. Agent Graph — Request Flow
+
+```mermaid
+flowchart LR
+    START(("START")) --> GR["Guardrail"]
+
+    GR -->|"greeting / chitchat"| SY["Synthesizer"]
+    GR -->|"research query"| PL["Planner"]
+
+    PL --> RT["Retriever"]
+    RT --> AR["Arbitrator"]
+    AR --> SY
+
+    SY --> END_(("END"))
+
+    style GR fill:#2d2d3f,stroke:#6366f1
+    style PL fill:#2d2d3f,stroke:#8b5cf6
+    style RT fill:#2d2d3f,stroke:#06b6d4
+    style AR fill:#2d2d3f,stroke:#f59e0b
+    style SY fill:#2d2d3f,stroke:#10b981
+```
+
+### LLM Call Budget per Query
+
+| Query Type | Nodes Executed | LLM Calls | Details |
+|---|---|---|---|
+| Greeting ("hi", "bye") | Guardrail → Synthesizer | **1** | Guardrail is regex-only; Synthesizer generates greeting |
+| First research question | All 5 | **1** | Planner short-circuits (no history to rewrite) |
+| Follow-up (uniform authority) | All 5 | **2** | Planner rewrites + Synthesizer answers |
+| Follow-up (mixed authority) | All 5 | **3** | Planner + Arbitrator + Synthesizer |
+
+### Sequence Diagram
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant API as Backend API
-    participant P as Planner
-    participant R as Retriever (Vector + Graph)
-    participant C as Critic
-    participant S as Synthesizer
+    participant U as User (Browser)
+    participant FE as Next.js Frontend
+    participant API as FastAPI Backend
+    participant GR as Guardrail
+    participant PL as Planner
+    participant RT as Retriever
+    participant AR as Arbitrator
+    participant SY as Synthesizer
+    participant PG as PostgreSQL
+    participant RD as Redis
+    participant GM as Gemini LLM
+    participant VY as Voyage AI
 
-    U->>API: POST /api/ask {question}
-    API->>P: What should we search first?
-    P->>R: search query 1
-    R-->>P: chunks + trust tags
-    P->>C: evaluate evidence so far
-    C-->>P: not enough, or contradiction found
-    P->>R: search query 2 (refined)
-    R-->>P: more chunks
-    P->>C: evaluate again
-    C-->>API: enough evidence, proceed
-    API->>S: write final answer from all evidence
-    S-->>API: answer + sources + trust tags + contradictions
-    API-->>U: JSON response (see section 6)
+    U->>FE: Submit question
+    FE->>API: POST /api/ask/stream {question, session_id}
+    Note over API: Rate limit check (Redis)
+
+    API->>GR: Classify intent (regex)
+    GR-->>API: is_conversational: false
+
+    API->>PL: Rewrite query with history
+    alt Follow-up question (messages > 1)
+        PL->>GM: Rewrite with context
+        GM-->>PL: Standalone query + search terms
+    else First question
+        Note over PL: Pass-through (no LLM call)
+    end
+
+    API->>RT: Retrieve evidence
+    RT->>RD: Check cache
+    alt Cache miss
+        RT->>VY: Embed query
+        VY-->>RT: Query vector
+        RT->>PG: Hybrid search (vector + full-text RRF)
+        PG-->>RT: Top 50 candidates
+        Note over RT: Cross-encoder rerank → top 5
+        RT->>RD: Cache results
+    else Cache hit
+        RD-->>RT: Cached chunks
+    end
+
+    API-->>FE: SSE: metadata {sources, figures, citations}
+
+    API->>AR: Arbitrate evidence
+    alt Mixed authority weights
+        AR->>GM: Detect contradictions
+        GM-->>AR: Contradiction list
+    else Uniform authority
+        Note over AR: Skip LLM (no conflict possible)
+    end
+
+    API-->>FE: SSE: metadata {contradictions}
+
+    API->>SY: Synthesize answer
+    SY->>GM: Stream answer generation
+    loop Token streaming
+        GM-->>SY: Token chunk
+        SY-->>API: Token
+        API-->>FE: SSE: token {delta}
+    end
+
+    API->>PG: Persist session
+    API-->>FE: SSE: done {answer, sources, reasoning_steps}
+    FE-->>U: Render answer + sources + trace
 ```
-
-Max hops per question: **5** (hard limit, prevents infinite loops and runaway API usage). If the agent hits 5 hops without being confident, it answers with what it has and says so honestly — don't hide uncertainty.
 
 ---
 
 ## 4. Components
 
-### 4.1 Ingestion Pipeline (offline, run once)
-- Reads all 415 documents (PDF, DOCX, markdown, txt, simulated scans)
-- Runs OCR on scanned pages (Tesseract)
-- Splits documents into chunks (by section/paragraph, ~300-500 words each)
-- Tags every chunk with metadata: `source_type` (novel / wiki / codex / ephemera), `trust_tier` (see section 5)
-- Generates embeddings for each chunk (Voyage AI `voyage-4-lite`)
-- Writes chunks + embeddings + metadata into Chroma
+### 4.1 Guardrail Node
+- Regex-based intent classifier — zero LLM calls
+- Matches greetings, pleasantries, meta-questions ("who are you", "help")
+- Sets `is_conversational: true` to trigger the conditional edge that bypasses planner/retriever/arbitrator
 
-### 4.2 Graph Builder (offline, run once)
-- Reads each chunk once, asks an LLM to pull out entities and relationships ("Component Y — affects → Equipment Z")
-- Builds a NetworkX graph: nodes = entities, edges = relationships, each edge tagged with its source chunk and trust tier
-- Saves the graph to disk (`graph.gpickle`), loaded once when the backend starts
+### 4.2 Planner Node
+- Rewrites follow-up questions into standalone queries by resolving pronouns against recent dialogue history
+- Uses last 3 messages + session summary for context
+- Outputs `rewritten_query` + `search_terms` (1-2 optimized search queries)
+- **Skips LLM call on first turn** (no history to resolve)
 
-### 4.3 Retrieval Layer (online, called every search round)
-- **Vector search:** embed the current search query, find closest chunks in Chroma
-- **Graph search:** if the question involves connected entities, walk the graph a few hops to pull in linked facts
-- Both return results already carrying their trust tier
+### 4.3 Retriever Node
+- Hybrid search: pgvector cosine similarity + PostgreSQL full-text search, fused via Reciprocal Rank Fusion (RRF)
+- Cross-encoder reranking (top 50 candidates → top 5)
+- Redis caching: SHA-256 query hash as key, configurable TTL
+- Fail-open: if Redis is down, proceeds without cache
 
-### 4.4 Trust & Contradiction Layer
-- Every chunk/edge already has a `trust_tier` from ingestion (no separate service — it's metadata attached at ingestion time)
-- A small comparison function checks: do any two retrieved chunks make opposite claims about the same fact? (simple LLM prompt: "do these two passages agree or conflict?")
-- If conflict found, it's passed to the Critic agent, not resolved silently
+### 4.4 Arbitrator Node
+- Sorts chunks by epistemic weight × relevance score
+- **Only invokes the LLM when mixed authority levels are present** (e.g., codex + novel sources)
+- Detects factual contradictions (conflicting dates, counts, allegiances)
+- Deduplicates contradiction topics
 
-### 4.5 Agent Orchestrator
-Three agents, each with one job. Plain Python functions, no framework needed:
+### 4.5 Synthesizer Node
+- Streams the final answer via LLM with full evidence context
+- Two modes: research answer (with source context) or conversational greeting
+- Extracts referenced figures and maps them to embedded visuals
 
-| Agent | Input | Output |
-|---|---|---|
-| **Planner** | question + everything found so far | next search query, or "done" |
-| **Critic** | all retrieved chunks so far | `enough: true/false`, `contradiction: true/false + details` |
-| **Synthesizer** | all retrieved chunks (final set) | final answer text + citations |
+### 4.6 Backend API (FastAPI)
+- `POST /api/ask/stream` — SSE streaming endpoint (primary)
+- `POST /api/ask` — synchronous endpoint (fallback)
+- `GET /api/sessions` — list all sessions
+- `GET /api/sessions/:id` — load session with full turn history
+- `DELETE /api/sessions/:id` — delete a session
+- `GET /api/documents/:id` — document detail view
+- `GET /api/visuals/:filename` — visual asset metadata
+- Rate limiting: 30 requests/min per IP (Redis sliding window, fail-open)
 
-The orchestrator is the loop: call Planner → call Retriever → call Critic → repeat or hand off to Synthesizer.
+### 4.7 Frontend (Next.js App Router)
+- URL-based session routing: `/chat` (new) → `/chat/<sessionId>` (active)
+- SSE streaming: renders answer tokens, status updates, and reasoning trace in real-time
+- Sidebar: session history with relative timestamps, delete, new chat
+- Answer cards: markdown rendering, source citations with trust badges, figure embedding
+- Investigation trace: collapsible timeline of each agent node's actions
 
-### 4.6 Backend API
-FastAPI app exposing the endpoints in section 6. Stateless — each request carries its own question, no session storage needed for the MVP.
-
-### 4.7 Frontend
-Next.js (App Router) + Tailwind. Three-panel layout, NotebookLM-style split screen:
-- **Left panel — Sources:** the source documents used for the current answer, each shown as a card with a trust badge (green = high, yellow = medium, orange = medium-low, red = low)
-- **Center panel — Chat:** question input + scrolling answer history. Shows an amber contradiction banner above any answer where `contradictions` is non-empty
-- **Right panel — Reasoning Trace:** the agent's search steps for the current question, in order, updating live as they come in
-
-Calls `/api/ask` only — no Next.js API routes, all data comes from the FastAPI backend. Built first against mock JSON matching the exact schema in section 6.
-
-### 4.8 Telegram Bot
-`python-telegram-bot`, long-polling (no public URL needed). Calls the same `/api/ask` endpoint, formats the response as a text message (answer + top 2-3 sources). Same backend, second doorway — no logic duplicated.
-
-### 4.9 Eval Harness
-A script that loops through `sample_questions.json`, calls `/api/ask` for each, and logs whether the answer looks correct (simple keyword check or LLM-as-judge). Run this after every meaningful backend change. Output goes to `results/eval_log.json` — this becomes evidence in your report of "what works."
+### 4.8 Session Persistence
+- PostgreSQL `session_history` table: stores question/response turns per session_id
+- Auto-generates session titles from the first question
+- LangGraph checkpoint: `AsyncPostgresSaver` for graph state persistence across turns
 
 ---
 
 ## 5. Data Model
 
-### Trust tiers (assign at ingestion time, based on document type)
-| Tier | Source type | Meaning |
-|---|---|---|
-| `high` | Codex data books | Official reference, most reliable |
-| `medium` | Wiki articles | Curated, generally reliable |
-| `medium-low` | Novels | In-world narrative, can be biased by character POV |
-| `low` | Ephemera (letters, ledgers, ballads, trial transcripts) | Personal, gossip, or unverified accounts |
+### Trust Tiers (assigned at ingestion based on document category)
 
-### Chunk schema (stored in Chroma metadata)
+| Tier | Source Category | Authority Weight | Meaning |
+|---|---|---|---|
+| `high` | Codex, Image plates | 1.0 | Official reference, supreme canon |
+| `medium` | Wiki articles | 0.8 | Curated consensus lore |
+| `medium-low` | Novels, Chronicles | 0.6 | Narrative accounts, possible POV bias |
+| `low` | Ephemera (letters, ledgers, ballads) | 0.4 | Personal, unverified accounts |
+
+### Chunk Schema (PostgreSQL `document_chunks` table)
+
 ```json
 {
   "chunk_id": "codex_vol2_p114_c3",
-  "text": "...",
-  "source_doc": "Codex Vol. 2",
-  "page": 114,
-  "source_type": "codex",
-  "trust_tier": "high"
-}
-```
-
-### Graph edge schema (stored in NetworkX)
-```json
-{
-  "from": "Component Y",
-  "to": "Equipment Z",
-  "relation": "affects",
-  "source_chunk_id": "codex_vol2_p114_c3",
-  "trust_tier": "high"
+  "doc_id": "codex_vol2",
+  "content": "...",
+  "section_title": "Chapter 4: The Forging",
+  "embedding": [0.012, -0.034, ...],
+  "metadata_payload": {
+    "source_category": "codex",
+    "epistemic_weight": 1.0,
+    "page_number": 114
+  },
+  "figure_references": ["assets/plates/codex_vol2_plate7.png"]
 }
 ```
 
@@ -182,93 +259,134 @@ A script that loops through `sample_questions.json`, calls `/api/ask` for each, 
 
 ## 6. API Contract
 
-### `POST /api/ask`
+### `POST /api/ask/stream`
+
 Request:
 ```json
-{ "question": "Which other equipment is affected if component Y fails?" }
+{
+  "question": "In the portrait of Ignatz Ashgrove, what object are they holding?",
+  "session_id": "uuid-here"
+}
 ```
 
-Response:
+SSE Events:
+```
+event: status
+data: {"stage": "retrieving", "message": "Searching archive with hybrid vector search..."}
+
+event: metadata
+data: {"sources": [...], "referenced_figures": [...], "citations": [...], "reasoning_steps": [...]}
+
+event: token
+data: {"delta": "According to "}
+
+event: done
+data: {"answer": "...", "sources": [...], "reasoning_steps": [...], "contradictions": [...]}
+```
+
+### `POST /api/ask`
+
+Synchronous equivalent — returns the full response as a single JSON object:
 ```json
 {
-  "answer": "string - the final written answer",
+  "answer": "string",
   "reasoning_steps": [
-    { "step": 1, "action": "Searched: 'component Y failure'", "found": "3 relevant chunks" },
-    { "step": 2, "action": "Not enough info, searched: 'equipment linked to Y'", "found": "2 relevant chunks" }
+    {"step": 1, "action": "Input Guardrail & Intent Classification", "found": "..."},
+    {"step": 2, "action": "Contextual Query Planning", "found": "..."},
+    {"step": 3, "action": "Hybrid Archive Retrieval", "found": "..."},
+    {"step": 4, "action": "Epistemic Source Arbitration", "found": "..."},
+    {"step": 5, "action": "Evidence Synthesis", "found": "..."}
   ],
   "sources": [
-    { "title": "Codex Vol. 2, p.114", "trust": "high", "snippet": "..." },
-    { "title": "Tavern Ballad #7", "trust": "low", "snippet": "..." }
+    {"title": "codex_vol2", "trust": "high", "snippet": "...", "relevance_score": 0.91}
   ],
   "contradictions": [
-    { "topic": "Who repaired the artifact", "sources_disagree": ["Codex Vol.2", "Ballad #7"] }
+    {"topic": "Forging year of the artifact", "sources_disagree": ["codex_vol2", "ballad_7"]}
   ]
 }
 ```
 
-### `GET /api/health`
-Returns `{ "status": "ok" }` — used to confirm the backend is up before a demo.
-
-This contract is frozen from day one. Frontend mocks it exactly. Backend must return exactly this shape.
-
 ---
 
-## 7. Codebase Folder Structure (inside `src/`)
+## 7. Codebase Structure
 
 ```
 src/
 ├── backend/
-│   ├── main.py              # FastAPI app, defines /api/ask, /api/health
-│   ├── orchestrator.py       # the loop: Planner -> Retriever -> Critic -> Synthesizer
+│   ├── main.py                  # FastAPI app, route definitions
 │   ├── agents/
-│   │   ├── planner.py
-│   │   ├── critic.py
-│   │   └── synthesizer.py
-│   ├── retrieval/
-│   │   ├── vector_search.py  # Chroma queries
-│   │   └── graph_search.py   # NetworkX queries
-│   └── trust.py               # trust tier lookup + contradiction check
-├── ingestion/
-│   ├── ingest.py              # parses corpus, chunks, embeds, loads into Chroma
-│   └── build_graph.py         # extracts entities/relations, builds NetworkX graph
-├── frontend/                  # Next.js app
-├── bot/
-│   └── telegram_bot.py
-└── eval/
-    └── run_eval.py            # runs sample_questions.json against /api/ask
+│   │   ├── graphs/
+│   │   │   └── workflow.py      # LangGraph definition (conditional edges)
+│   │   ├── nodes/
+│   │   │   ├── guardrail.py     # Intent classification (regex)
+│   │   │   ├── planner.py       # Query rewriting with history
+│   │   │   ├── retriever.py     # Hybrid search + caching
+│   │   │   ├── arbitrator.py    # Contradiction detection
+│   │   │   └── synthesizer.py   # Answer streaming
+│   │   ├── llm.py               # LLM factory (cached instances)
+│   │   ├── prompts.py           # System instructions + prompt builders
+│   │   ├── service.py           # AgentService (run + stream)
+│   │   ├── sessions.py          # Session persistence
+│   │   └── state/
+│   │       └── models.py        # ConversationalInvestigatorState
+│   ├── core/
+│   │   ├── config.py            # Settings (pydantic-settings)
+│   │   ├── database.py          # PostgreSQL connection pool
+│   │   ├── redis.py             # Redis caching layer (fail-open)
+│   │   ├── rate_limit.py        # IP-based rate limiter
+│   │   └── logging.py           # Structured logging (structlog)
+│   ├── ingestion/               # Corpus parsing, chunking, embedding
+│   └── retrieval/
+│       ├── vector_store.py      # pgvector hybrid search + RRF
+│       ├── reranker.py          # Cross-encoder reranking
+│       └── schemas.py           # SearchResultChunk model
+├── frontend/
+│   ├── app/
+│   │   ├── page.tsx             # Root redirect → /chat
+│   │   ├── chat/
+│   │   │   ├── layout.tsx       # Shared chat layout
+│   │   │   ├── page.tsx         # New session entry point
+│   │   │   └── [sessionId]/
+│   │   │       └── page.tsx     # Dynamic session route
+│   │   └── layout.tsx           # Root layout
+│   ├── components/
+│   │   ├── hermes-app.tsx       # Main app shell (router-driven sessions)
+│   │   ├── chat-panel.tsx       # Message list + input
+│   │   ├── chat-sidebar.tsx     # Session history sidebar (next/link)
+│   │   ├── answer-card.tsx      # Answer rendering + reasoning trace
+│   │   ├── chat-input-bar.tsx   # Query input with suggestions
+│   │   ├── document-modal.tsx   # Source document viewer
+│   │   └── image-lightbox.tsx   # Figure viewer
+│   └── lib/
+│       ├── api.ts               # SSE streaming client
+│       ├── constants.ts         # App config + suggested queries
+│       └── validation/          # Zod schemas
+docker-compose.yml               # PostgreSQL + Redis services
+Makefile                         # dev commands (make backend, make frontend, make db)
 ```
 
 ---
 
 ## 8. Tech Stack
 
-| Layer | Tool | Cost |
+| Layer | Tool | Purpose |
 |---|---|---|
-| Backend | Python + FastAPI | Free |
-| Vector DB | Chroma (embedded) | Free |
-| Knowledge graph | NetworkX (in-memory) | Free |
-| Embeddings | Voyage AI `voyage-4-lite` | Free (200M token allowance) |
-| LLM (all 3 agents) | OpenRouter free models (`:free`, currently `minimax/minimax-m2.7:free`) | Free |
-| OCR | Tesseract | Free |
-| Frontend | Next.js + Tailwind | Free |
-| Bot | python-telegram-bot | Free |
-| Hosting (optional) | Fly.io free tier | Free |
+| Backend Framework | FastAPI | Async API + SSE streaming |
+| Agent Orchestration | LangGraph | Conditional graph with checkpointing |
+| Vector Database | PostgreSQL + pgvector | Hybrid vector + full-text search |
+| Caching | Redis 7 | Retrieval cache + rate limit counters |
+| Embeddings | Voyage AI (`voyage-3.5-lite`) | 1024-dim document/query embeddings |
+| LLM | Google Gemini (`gemini-2.5-flash`) | Planner, Arbitrator, Synthesizer |
+| Reranking | Cross-encoder | Relevance reranking of search candidates |
+| Frontend | Next.js 16 (App Router) | SSE streaming + URL-based routing |
+| Styling | Tailwind CSS v4 | Utility-first dark theme |
 
 ---
 
 ## 9. Non-Functional Notes
 
-- **Rate limits:** free OpenRouter tier is ~50 requests/day per key with no card. Multi-agent means 3+ calls per search round. Use exponential backoff (1s, 2s, 4s...) on every LLM/API call, and have each team member use their own key during development.
-- **Cost/latency control:** hard cap of 5 search hops per question. If hit, answer with what's available and say so.
-- **Secrets:** all API keys in `.env`, `.env` listed in `.gitignore`. Never hard-code keys in source files — judges read full commit history, including old commits.
-- **Corpus is read-only:** never modify files in the provided corpus folder; ingestion scripts only read from it.
-
----
-
-## 10. Deployment
-
-For the demo, either:
-- Run everything locally and record the screen (simplest, most reliable), or
-- Deploy backend + frontend to Fly.io free tier for a live public link
-
-Local is safer for the recording — no risk of a free-tier cold start or outage happening mid-take.
+- **Rate limiting:** 30 requests/minute per IP, Redis sliding window. Fails open if Redis is unavailable.
+- **Model caching:** LLM instances are cached per temperature to avoid re-initializing the client on every node invocation.
+- **Retrieval caching:** SHA-256 query hash → Redis, configurable TTL. Eliminates redundant embedding + search calls for repeated queries.
+- **Session persistence:** PostgreSQL-backed. Sessions survive server restarts. LangGraph checkpoints maintain conversation state across turns.
+- **Fail-open design:** Redis and rate limiting are designed to degrade gracefully — if Redis is down, the system logs a warning and proceeds without caching.

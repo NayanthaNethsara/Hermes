@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { fetchVisualDetails } from "@/lib/api";
-import type { VisualCatalogItem } from "@/types/archivist";
-import { CloseIcon, ImageIcon } from "@/components/icons";
+import type { VisualCatalogItem } from "@/types/hermes";
+import { X, Image as ImageIcon } from "lucide-react";
 
 export function ImageLightbox({
   imagePath,
@@ -16,22 +16,31 @@ export function ImageLightbox({
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (!imagePath) {
-      setDetails(null);
-      return;
-    }
+    if (!imagePath) return;
 
-    setIsLoading(true);
-    fetchVisualDetails(imagePath)
-      .then((data) => setDetails(data))
-      .catch(() => setDetails(null))
-      .finally(() => setIsLoading(false));
+    let isCancelled = false;
+    const loadVisual = async () => {
+      setIsLoading(true);
+      try {
+        const data = await fetchVisualDetails(imagePath);
+        if (!isCancelled) setDetails(data);
+      } catch {
+        if (!isCancelled) setDetails(null);
+      } finally {
+        if (!isCancelled) setIsLoading(false);
+      }
+    };
+
+    void loadVisual();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      isCancelled = true;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [imagePath, onClose]);
 
   if (!imagePath) return null;
@@ -47,7 +56,6 @@ export function ImageLightbox({
       />
 
       <div className="card-elevated relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl lg:flex-row">
-        {/* Left / Main image view */}
         <div className="relative flex flex-1 items-center justify-center bg-background/90 p-4 sm:p-6">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -57,11 +65,10 @@ export function ImageLightbox({
           />
         </div>
 
-        {/* Right / Metadata Sidebar */}
         <div className="flex w-full flex-col border-t border-border bg-card lg:w-96 lg:border-t-0 lg:border-l">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
             <div className="flex items-center gap-2">
-              <ImageIcon className="text-primary h-4.5 w-4.5" />
+              <ImageIcon size={16} className="text-white" />
               <span className="font-serif text-sm font-semibold tracking-wide uppercase text-muted-foreground">
                 Visual Plate Inspector
               </span>
@@ -69,9 +76,9 @@ export function ImageLightbox({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             >
-              <CloseIcon className="h-4.5 w-4.5" />
+              <X size={18} />
             </button>
           </div>
 

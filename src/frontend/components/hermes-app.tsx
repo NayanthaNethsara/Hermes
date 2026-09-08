@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { askArchivist, ArchivistApiError } from "@/lib/api";
-import { ChatPanel, type ChatTurn } from "@/components/chat-panel";
+import { askHermes, HermesApiError } from "@/lib/api";
+import { ChatPanel } from "@/components/chat-panel";
 import { DocumentModal } from "@/components/document-modal";
 import { ImageLightbox } from "@/components/image-lightbox";
+import type { ChatTurn } from "@/types/hermes";
 
-export function ArchivistApp() {
+export function HermesApp() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -25,11 +26,11 @@ export function ArchivistApp() {
     };
 
     try {
-      const response = await askArchivist(question);
+      const response = await askHermes(question);
       setLastResponse(response);
     } catch (error) {
       const message =
-        error instanceof ArchivistApiError
+        error instanceof HermesApiError
           ? error.message
           : "Sorry, something went wrong answering that question.";
       setLastResponse({
@@ -49,7 +50,6 @@ export function ArchivistApp() {
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0d0d0f] text-[#ededed] overflow-hidden">
-      {/* Minimal Header */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/5 px-4 sm:px-6 bg-[#0d0d0f]/80 backdrop-blur-xs z-10">
         <div className="flex items-baseline gap-2">
           <span className="text-[13.5px] font-medium tracking-tight text-white">
@@ -71,7 +71,6 @@ export function ArchivistApp() {
         )}
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
         <ChatPanel
           turns={turns}
@@ -82,14 +81,12 @@ export function ArchivistApp() {
         />
       </main>
 
-      {/* Document Inspector Modal */}
       <DocumentModal
         docId={selectedDocId}
         onClose={() => setSelectedDocId(null)}
         onSelectImage={(img) => setSelectedImagePath(img)}
       />
 
-      {/* Visual Lightbox */}
       <ImageLightbox
         imagePath={selectedImagePath}
         onClose={() => setSelectedImagePath(null)}

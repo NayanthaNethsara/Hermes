@@ -1,4 +1,4 @@
-import type { Contradiction } from "@/types/archivist";
+import type { Contradiction } from "@/types/hermes";
 
 export function ContradictionBanner({
   contradictions,

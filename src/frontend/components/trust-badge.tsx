@@ -1,4 +1,4 @@
-import type { TrustTier } from "@/types/archivist";
+import type { TrustTier } from "@/types/hermes";
 
 const TRUST_STYLES: Record<TrustTier, string> = {
   high: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",

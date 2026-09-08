@@ -1,7 +1,3 @@
-// The response shape returned by POST /api/ask on the FastAPI backend.
-// Matches the API contract in docs/architecture.md section 6 exactly —
-// do not change this shape without updating that doc first.
-
 export type TrustTier = "high" | "medium" | "medium-low" | "low";
 
 export interface ReasoningStep {
@@ -28,7 +24,7 @@ export interface Contradiction {
   sources_disagree: string[];
 }
 
-export interface ArchivistResponse {
+export interface HermesResponse {
   answer: string;
   reasoning_steps: ReasoningStep[];
   sources: Source[];
@@ -36,6 +32,7 @@ export interface ArchivistResponse {
   referenced_figures?: string[];
   citations?: string[];
 }
+
 
 export interface DocumentChunk {
   chunk_id: string;
@@ -57,7 +54,25 @@ export interface VisualCatalogItem {
   title: string;
   extracted_text: string;
   visual_description: string;
-  attributes: Record<string, any>;
+  attributes: Record<string, unknown>;
   asset_path: string;
   rich_content?: string;
+}
+
+export interface ChatTurn {
+  question: string;
+  response: HermesResponse | null;
+}
+
+export interface AskQueryPayload {
+  question: string;
+}
+
+export interface ChatInputBarProps {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  className?: string;
 }

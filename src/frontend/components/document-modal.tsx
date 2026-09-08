@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { fetchDocumentDetails } from "@/lib/api";
-import type { DocumentDetails } from "@/types/archivist";
-import { BookOpenIcon, CloseIcon, ImageIcon } from "@/components/icons";
+import type { DocumentDetails } from "@/types/hermes";
+import { BookOpen, X, Image as ImageIcon } from "lucide-react";
+import { cleanWikilinks } from "@/lib/utils";
 
 export function DocumentModal({
   docId,
@@ -19,24 +22,34 @@ export function DocumentModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!docId) {
-      setDoc(null);
-      setError(null);
-      return;
-    }
+    if (!docId) return;
 
-    setIsLoading(true);
-    setError(null);
-    fetchDocumentDetails(docId)
-      .then((data) => setDoc(data))
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load document"))
-      .finally(() => setIsLoading(false));
+    let isCancelled = false;
+    const loadDocument = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetchDocumentDetails(docId);
+        if (!isCancelled) setDoc(data);
+      } catch (err) {
+        if (!isCancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load document");
+        }
+      } finally {
+        if (!isCancelled) setIsLoading(false);
+      }
+    };
+
+    void loadDocument();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      isCancelled = true;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [docId, onClose]);
 
   if (!docId) return null;
@@ -51,11 +64,10 @@ export function DocumentModal({
       />
 
       <div className="card-elevated relative z-10 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4 bg-muted/20">
           <div className="flex items-center gap-3">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-primary">
-              <BookOpenIcon className="h-4.5 w-4.5" />
+              <BookOpen size={16} />
             </span>
             <div>
               <div className="flex items-center gap-2">
@@ -81,13 +93,12 @@ export function DocumentModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
           >
-            <CloseIcon className="h-5 w-5" />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Content */}
         <div className="scrollbar-thin flex-1 overflow-y-auto p-6 space-y-6">
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
@@ -115,14 +126,76 @@ export function DocumentModal({
                     </span>
                   </div>
 
-                  <p className="text-[14px] leading-relaxed text-foreground/90 whitespace-pre-wrap font-sans">
-                    {chunk.content}
-                  </p>
+                  <div className="text-[14px] leading-relaxed text-[#d4d4d8] space-y-2 font-sans">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => (
+                          <h1 className="text-[17px] font-medium text-white mt-3 mb-1.5">
+                            {children}
+                          </h1>
+                        ),
+                        h2: ({ children }) => (
+                          <h2 className="text-[15.5px] font-medium text-white mt-2.5 mb-1">
+                            {children}
+                          </h2>
+                        ),
+                        h3: ({ children }) => (
+                          <h3 className="text-[14.5px] font-medium text-[#e4e4e7] mt-2 mb-1">
+                            {children}
+                          </h3>
+                        ),
+                        p: ({ children }) => (
+                          <div className="leading-relaxed text-[#d4d4d8] mb-2 last:mb-0">
+                            {children}
+                          </div>
+                        ),
+                        strong: ({ children }) => (
+                          <strong className="font-medium text-white">{children}</strong>
+                        ),
+                        ul: ({ children }) => (
+                          <ul className="my-2 list-disc pl-5 space-y-1 text-[13.5px]">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="my-2 list-decimal pl-5 space-y-1 text-[13.5px]">
+                            {children}
+                          </ol>
+                        ),
+                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                        table: ({ children }) => (
+                          <div className="my-3 overflow-x-auto rounded-lg border border-white/10 bg-[#161618]">
+                            <table className="w-full border-collapse text-left text-[13px]">
+                              {children}
+                            </table>
+                          </div>
+                        ),
+                        th: ({ children }) => (
+                          <th className="border-b border-white/10 bg-white/5 px-3 py-2 font-medium text-white">
+                            {children}
+                          </th>
+                        ),
+                        td: ({ children }) => (
+                          <td className="border-b border-white/5 px-3 py-2 text-[#a1a1aa] last:border-b-0">
+                            {children}
+                          </td>
+                        ),
+                        code: ({ children }) => (
+                          <code className="rounded bg-white/10 px-1.5 py-0.5 text-[12.5px] font-mono text-[#f4f4f5]">
+                            {children}
+                          </code>
+                        ),
+                      }}
+                    >
+                      {cleanWikilinks(chunk.content)}
+                    </ReactMarkdown>
+                  </div>
 
                   {chunk.figures && chunk.figures.length > 0 && (
                     <div className="pt-2 border-t border-border/30">
                       <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-                        <ImageIcon className="h-3.5 w-3.5" />
+                        <ImageIcon size={14} />
                         Associated Visual Plates
                       </p>
                       <div className="flex flex-wrap gap-2.5">
@@ -160,7 +233,6 @@ export function DocumentModal({
           ) : null}
         </div>
 
-        {/* Footer */}
         <div className="border-t border-border px-6 py-3 bg-muted/20 flex items-center justify-between text-xs text-muted-foreground">
           <span>Press ESC or click outside to return to chat</span>
           <button

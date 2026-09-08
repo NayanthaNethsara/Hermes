@@ -25,3 +25,14 @@ export const VisualFilenameSchema = z
   .string()
   .trim()
   .min(1, "Visual filename cannot be empty.");
+
+export const ArchiveSearchSchema = z.object({
+  query: z
+    .string()
+    .trim()
+    .min(QUERY_CONSTRAINTS.MIN_LENGTH, "Search cannot be empty.")
+    .max(
+      QUERY_CONSTRAINTS.MAX_LENGTH,
+      `Search is too long (maximum ${QUERY_CONSTRAINTS.MAX_LENGTH} characters).`
+    ),
+});

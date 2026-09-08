@@ -7,6 +7,7 @@ export interface ReasoningStep {
 }
 
 export interface Source {
+  chunk_id?: string;
   title: string;
   trust: TrustTier;
   snippet: string;
@@ -33,6 +34,34 @@ export interface HermesResponse {
   citations?: string[];
 }
 
+
+export interface SearchResultChunk {
+  chunk_id: string;
+  doc_id: string;
+  content: string;
+  relevance_score: number;
+  vector_score?: number | null;
+  keyword_score?: number | null;
+  figure_references: string[];
+  table_references: string[];
+  metadata_payload: Record<string, unknown>;
+}
+
+export interface SearchResponse {
+  results: SearchResultChunk[];
+  referenced_figures: string[];
+}
+
+export interface ArchiveDocument {
+  doc_id: string;
+  category: string;
+  epistemic_weight: number | null;
+  section: string | null;
+  excerpt: string;
+  figures: string[];
+  chunk_count: number;
+  best_relevance: number;
+}
 
 export interface DocumentChunk {
   chunk_id: string;

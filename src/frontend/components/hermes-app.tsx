@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { PanelLeft } from "lucide-react";
 import {
   askHermesStream,
@@ -41,60 +42,6 @@ function sortSessionsByUpdatedAt(sessions: SessionSummary[]): SessionSummary[] {
   });
 }
 
-function DeleteSessionDialog({
-  session,
-  onCancel,
-  onConfirm,
-}: {
-  session: SessionSummary | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  if (!session) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="fixed inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={onCancel}
-        aria-hidden="true"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-session-title"
-        className="relative z-10 w-full max-w-sm rounded-xl border border-white/10 bg-[#18181b] p-5 shadow-2xl"
-      >
-        <div className="space-y-2">
-          <h2 id="delete-session-title" className="text-sm font-medium text-white">
-            Delete this chat?
-          </h2>
-          <p className="text-xs leading-relaxed text-[#a1a1aa]">
-            This will remove &quot;{session.title}&quot; from your chat history.
-          </p>
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[#d4d4d8] hover:bg-white/10 hover:text-white transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="rounded-md border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-500/25 transition-colors"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function HermesApp({ initialSessionId }: HermesAppProps) {
   const router = useRouter();
 
@@ -107,7 +54,6 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
   const [isThinking, setIsThinking] = useState(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [selectedImagePath, setSelectedImagePath] = useState<string | null>(null);
-  const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(null);
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(null);
 
   const hasRedirected = useRef(false);
@@ -347,18 +293,10 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
 
   const handleDeleteSession = (targetSessionId: string) => {
     const target = sessions.find((session) => session.id === targetSessionId);
-    if (target) {
-      setDeleteCandidate(target);
-    }
-  };
+    if (!target) return;
 
-  const confirmDeleteSession = () => {
-    if (!deleteCandidate) return;
-
-    const target = deleteCandidate;
     const wasActive = sessionId === target.id;
 
-    setDeleteCandidate(null);
     setSessions((prev) => prev.filter((s) => s.id !== target.id));
 
     if (wasActive) {
@@ -431,15 +369,24 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
           </div>
         </div>
 
-        {turns.length > 0 && (
-          <button
-            type="button"
-            onClick={handleReset}
-            className="text-xs text-[#8e8e93] hover:text-white transition-colors cursor-pointer"
+        <div className="flex items-center gap-4">
+          <Link
+            href="/library"
+            className="text-xs text-[#8e8e93] hover:text-white transition-colors"
           >
-            New chat
-          </button>
-        )}
+            Library
+          </Link>
+
+          {turns.length > 0 && (
+            <button
+              type="button"
+              onClick={handleReset}
+              className="text-xs text-[#8e8e93] hover:text-white transition-colors cursor-pointer"
+            >
+              New chat
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="flex-1 min-h-0 flex relative overflow-hidden">
@@ -471,12 +418,6 @@ export function HermesApp({ initialSessionId }: HermesAppProps) {
       <ImageLightbox
         imagePath={selectedImagePath}
         onClose={() => setSelectedImagePath(null)}
-      />
-
-      <DeleteSessionDialog
-        session={deleteCandidate}
-        onCancel={() => setDeleteCandidate(null)}
-        onConfirm={confirmDeleteSession}
       />
 
       {pendingDeletion && (

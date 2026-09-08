@@ -116,6 +116,10 @@ export function ChatPanel({
                 isStreaming={turn.isStreaming}
                 onSelectDocument={onSelectDocument}
                 onSelectImage={onSelectImage}
+                onRegenerate={disabled ? undefined : () => onSubmit(turn.question)}
+                onEditQuestion={
+                  disabled ? undefined : () => setInputValue(turn.question)
+                }
               />
             ))}
           </div>

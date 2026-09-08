@@ -1,64 +1,93 @@
 # AGENTS.md
 
-## Code Style and Engineering Principles
+Engineering conventions for Hermes by TheKade. These apply to everyone working
+in this repository, human or agent.
 
-- **Folder Structure**: Keep code organized strictly within the defined repository structure.
-- **Self-Explanatory Code**: Use clear, descriptive names and small, single-responsibility functions so code is readable without external explanation.
-- **Minimal Commenting**: Do not add comments or docstrings. Omit comments on functions, classes, and modules unless strictly necessary for a non-obvious requirement or hardware constraint.
-- **No Unnecessary Abstractions**: Do not introduce speculative or future-proofing code. Build only what is explicitly requested.
-- **No Dead Code**: Eliminate unused functions, unused imports, unreferenced variables, and dead code paths.
-- **Design Principles**: Apply KISS, DRY, and SOLID principles to maintain clean, reusable implementations without added complexity.
-- **Semantic Styling**: In frontend code, use semantic color tokens (`bg-success`, `text-destructive`, `border-border`, etc.) rather than raw colors.
-- **Consistent Visual Language**: Maintain one color language per visual signal. Do not reuse the same palette for distinct meanings in the same view.
+## Code style
 
----
+- **Folder structure.** Keep code inside the structure defined below. Do not
+  introduce parallel layouts.
+- **Self-explanatory code.** Clear, descriptive names and small,
+  single-responsibility functions, so the code reads without external
+  explanation.
+- **Minimal commenting.** No comments or docstrings on functions, classes or
+  modules unless a requirement is genuinely non-obvious.
+- **No unnecessary abstractions.** No speculative or future-proofing code.
+  Build only what is asked for.
+- **No dead code.** No unused functions, unused imports, unreferenced variables
+  or unreachable paths.
+- **Design principles.** KISS, DRY and SOLID, without added ceremony.
+- **Semantic styling.** In frontend code use semantic tokens (`bg-success`,
+  `text-destructive`, `border-border`) rather than raw colors.
+- **Consistent visual language.** One color language per signal. Never reuse
+  the same palette for two different meanings in one view.
 
-## Repository Structure
+## Project rules
+
+- Secrets live in `.env`, never in source. `.env` stays gitignored.
+- The raw archive under `data/raw_archive` is read-only. Ingestion reads from
+  it and never writes back.
+- Every answer carries its sources. Contradictions between sources are
+  surfaced, never silently resolved.
+- Changing a response shape means updating [docs/api.md](docs/api.md) and the
+  frontend types in `src/frontend/types/hermes.ts` in the same change.
+- Redis is optional infrastructure. Anything that touches it fails open.
+
+## Repository structure
 
 ```
 .
-├── .env
+├── .env                        Local configuration, gitignored
+├── AGENTS.md
+├── README.md
 ├── Makefile
 ├── docker-compose.yml
-├── ai_usage/
 ├── configuration-example/
+│   └── .env.example
 ├── data/
+│   ├── raw_archive/            Source corpus, read-only
+│   └── extracted_assets/       Figures and tables written by ingestion
 ├── docs/
 │   ├── architecture.md
-│   ├── user-flows.md
-│   ├── SETUP.md
-│   ├── TESTING_GUIDE.md
-│   ├── decisions.md
-│   ├── limitations.md
-│   └── diagrams/
-├── sample_questions.json
-├── sample_questions_1b_1c.json
+│   ├── api.md
+│   ├── setup.md
+│   └── configuration.md
+├── scripts/
+│   └── preprocess_visuals.py
 └── src/
     ├── backend/
-    │   ├── Dockerfile
-    │   ├── pyproject.toml
-    │   ├── requirements.txt
-    │   ├── main.py
+    │   ├── main.py             FastAPI app, middleware, static mounts
     │   ├── agents/
     │   │   ├── graphs/workflow.py
-    │   │   ├── nodes/ (guardrail, planner, retriever, arbitrator, synthesizer)
-    │   │   ├── state/models.py
-    │   │   ├── llm.py
-    │   │   ├── prompts.py
-    │   │   ├── service.py
-    │   │   └── sessions.py
-    │   ├── core/ (config, database, redis, rate_limit, logging)
-    │   ├── ingestion/
-    │   └── retrieval/ (vector_store, reranker, schemas)
+    │   │   ├── nodes/          guardrail, planner, retriever, arbitrator, synthesizer
+    │   │   ├── state/          Graph state models
+    │   │   ├── llm.py          Chat model factory with provider fallback
+    │   │   ├── prompts.py      System instructions and prompt builders
+    │   │   ├── router.py       Ask and session endpoints
+    │   │   ├── service.py      Graph invocation and SSE streaming
+    │   │   ├── sessions.py     Session persistence, titles, summaries
+    │   │   └── stream.py
+    │   ├── core/               config, database, redis, rate_limit, logging, exceptions
+    │   ├── ingestion/          parser, chunker, embedder, vision, schemas
+    │   ├── retrieval/          vector_store, reranker, router, schemas
+    │   └── workers/            run_ingest.py, run_query.py
     └── frontend/
-        ├── Dockerfile
-        ├── package.json
-        ├── app/
-        │   ├── page.tsx (redirect → /chat)
-        │   └── chat/
-        │       ├── page.tsx (new session)
-        │       └── [sessionId]/page.tsx (existing session)
-        ├── components/ (hermes-app, chat-panel, chat-sidebar, answer-card, ...)
-        └── lib/ (api, constants, validation)
+        ├── app/                / redirect, /chat, /chat/[sessionId]
+        ├── components/         hermes-app, chat-panel, chat-sidebar, answer-card, modals
+        ├── lib/                api client, constants, validation
+        └── types/hermes.ts     Shared response types
 ```
 
+## Working in the backend
+
+Python 3.11+, FastAPI, async throughout. Graph nodes are one file each under
+`agents/nodes/` and return a partial state dict; do not merge two nodes'
+responsibilities into one function. Configuration flows through
+`get_settings()` rather than ad hoc environment lookups.
+
+## Working in the frontend
+
+Next.js App Router with React and Tailwind. Session state and the SSE
+connection live in `components/hermes-app.tsx`; presentation components stay
+stateless where they can. API calls go through `lib/api.ts` so error handling
+and validation stay in one place.

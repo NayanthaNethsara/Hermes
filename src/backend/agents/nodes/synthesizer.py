@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from src.backend.agents.llm import get_chat_model
 from src.backend.agents.prompts import (
-    ARCHIVIST_SYSTEM_INSTRUCTION,
+    HERMES_SYSTEM_INSTRUCTION,
     build_synthesis_context,
     build_synthesis_user_prompt,
 )
@@ -53,7 +53,7 @@ async def synthesize_answer(state: ConversationalInvestigatorState) -> dict[str,
     accumulated_parts: list[str] = []
     try:
         async for chunk in llm.astream([
-            SystemMessage(content=ARCHIVIST_SYSTEM_INSTRUCTION),
+            SystemMessage(content=HERMES_SYSTEM_INSTRUCTION),
             HumanMessage(content=user_prompt),
         ]):
             raw_chunk = chunk.content

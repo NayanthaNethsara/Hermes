@@ -1,79 +1,97 @@
-# The Archivist — Hermes
+# Hermes by TheKade
 
-An AI research assistant that answers questions over the Ashen Era Archive by
-searching the way a human would: planning searches, weighing how much each
-source can be trusted, and surfacing contradictions between sources instead of
-quietly picking a side.
+Hermes is a research assistant for the Ashen Era Archive. It answers a question
+by planning a search, retrieving evidence with hybrid vector and keyword search,
+weighing each source against a fixed authority hierarchy, and streaming back a
+cited answer.
 
-Built for SLIIT Codefest 2026, AI Competition **Sub-track 1C** ("Searching the
-Way a Human Does") as primary, and **Sub-track 1B** ("Connecting Facts Across
-Thousands of Pages") as secondary.
+Every answer carries the sources it was built from, the trust level of each
+source, the steps the agent took, and an explicit note when two sources
+disagree rather than a silently chosen winner.
 
-## What It Does
+## How it works
 
-A question flows through a LangGraph agent pipeline with conditional routing:
+A question runs through a LangGraph pipeline with conditional routing:
 
 ```
-User → Guardrail → Planner → Retriever → Arbitrator → Synthesizer → User
-              ↘ (greeting) ────────────────────────────↗
+User -> Guardrail -> Planner -> Retriever -> Arbitrator -> Synthesizer -> User
+             \_______ (greeting) ______________________________/
 ```
 
-- **Guardrail** classifies intent — greetings skip retrieval entirely
-- **Planner** rewrites follow-up questions into standalone queries using dialogue history
-- **Retriever** runs hybrid vector + full-text search (pgvector RRF), cross-encoder reranking, and Redis caching
-- **Arbitrator** detects factual contradictions across epistemic authority tiers
-- **Synthesizer** streams a sourced, markdown-formatted answer via SSE
+| Node | Responsibility |
+|---|---|
+| Guardrail | Regex intent check; greetings skip retrieval entirely |
+| Planner | Rewrites follow-up questions into standalone queries using dialogue history |
+| Retriever | Hybrid pgvector and full-text search fused with RRF, cross-encoder rerank, Redis cache |
+| Arbitrator | Sorts evidence by authority and detects factual contradictions |
+| Synthesizer | Streams a sourced Markdown answer over SSE |
 
-Every answer carries its sources with a trust tier (`high` / `medium` /
-`medium-low` / `low`), the agent's search trace, and an explicit warning
-when two sources disagree.
+See [docs/architecture.md](docs/architecture.md) for the full design.
 
-## Quick Start
+## Quick start
+
+Prerequisites: Python 3.11+, Node.js 20+, Docker.
 
 ```bash
-# Prerequisites: Python 3.11+, Node.js 20+, Docker (for PostgreSQL + Redis)
-
-# 1. Environment
-cp configuration-example/.env.example .env   # fill in API keys
-
-# 2. Infrastructure
-make db          # PostgreSQL + Redis via docker-compose
-
-# 3. Backend
-make backend     # installs deps + starts uvicorn
-
-# 4. Frontend (separate terminal)
-make frontend    # installs deps + starts Next.js dev server
+cp configuration-example/.env.example .env   # fill in VOYAGE_API_KEY and a Gemini credential
+make db                                      # PostgreSQL + Redis
+make setup                                   # backend and frontend dependencies
+make ingest                                  # one-time corpus ingestion
+make backend                                 # http://localhost:8000
+make frontend                                # http://localhost:3000, separate terminal
 ```
 
-Open `http://localhost:3000/chat` — the app routes to `/chat/<sessionId>` automatically.
+Open `http://localhost:3000/chat`. The app redirects to `/chat/<sessionId>`
+once a session is created. The API serves Swagger UI at
+`http://localhost:8000/docs`.
 
-See [docs/SETUP.md](docs/SETUP.md) for the full step-by-step guide.
+Step-by-step instructions and troubleshooting: [docs/setup.md](docs/setup.md).
 
-## Docs
+## Documentation
 
-| File | Contents |
+| Document | Contents |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | System design, agent graph, data flow, and API contract |
-| [docs/user-flows.md](docs/user-flows.md) | End-to-end user flow diagrams for all interaction paths |
-| [docs/SETUP.md](docs/SETUP.md) | Getting it running, plus troubleshooting |
-| [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | How to verify answer quality |
-| [docs/decisions.md](docs/decisions.md) | Choices made along the way and why |
-| [docs/limitations.md](docs/limitations.md) | What's known to be weak or untested |
+| [docs/architecture.md](docs/architecture.md) | System design, agent pipeline, retrieval, data model |
+| [docs/api.md](docs/api.md) | HTTP and SSE reference, plus the Swagger and OpenAPI links |
+| [docs/setup.md](docs/setup.md) | Local install, ingestion, running, troubleshooting |
+| [docs/configuration.md](docs/configuration.md) | Every environment variable and its default |
+| [AGENTS.md](AGENTS.md) | Engineering conventions for this repository |
 
-## Layout
+## Repository layout
 
 ```
-src/
-├── backend/        FastAPI app, LangGraph agents, retrieval, trust layer
-│   ├── agents/     Graph nodes (guardrail, planner, retriever, arbitrator, synthesizer)
-│   ├── core/       Config, database, Redis, rate limiting, logging
-│   ├── ingestion/  Corpus parsing, chunking, embedding
-│   └── retrieval/  Vector store, reranker, schemas
-└── frontend/       Next.js App Router UI
-    ├── app/        Route pages (/, /chat, /chat/[sessionId])
-    ├── components/ Chat panel, sidebar, answer cards, modals
-    └── lib/        API client, constants, validation
-data/               Ingested corpus data (gitignored)
-docker-compose.yml  PostgreSQL + Redis container orchestration
+src/backend/          FastAPI service
+  agents/             LangGraph nodes, graph, prompts, sessions
+  core/               Config, database, Redis, rate limiting, logging
+  ingestion/          Parsing, chunking, embedding
+  retrieval/          Vector store, reranker, search API
+  workers/            Offline ingestion and query CLIs
+src/frontend/         Next.js App Router UI
+  app/                Routes (/, /chat, /chat/[sessionId])
+  components/         Chat shell, panel, sidebar, answer card, modals
+  lib/                API client, constants, validation
+configuration-example/  .env template
+data/                 Source corpus and extracted assets (gitignored)
+docs/                 Project documentation
+scripts/              Standalone preprocessing utilities
+docker-compose.yml    PostgreSQL, Redis, backend, frontend
+Makefile              Development commands
 ```
+
+## Common commands
+
+```bash
+make help          # list every target
+make db            # start PostgreSQL and Redis
+make backend       # run the API with reload
+make frontend      # run the Next.js dev server
+make ingest        # ingest the whole raw archive
+make health        # check the API health endpoint
+make ask Q="..."   # run one query from the CLI
+make docker-up     # run the whole stack in Docker
+```
+
+## Tech stack
+
+FastAPI, LangGraph, PostgreSQL with pgvector, Redis, Voyage AI embeddings and
+reranking, Google Gemini, Next.js, Tailwind CSS.

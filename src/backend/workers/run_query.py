@@ -13,7 +13,7 @@ def format_separator(character: str = "=", length: int = 80) -> str:
 
 async def execute_query(question: str) -> None:
     print(format_separator("="))
-    print("THE ARCHIVIST — MULTIMODAL EVIDENCE & EMBEDDING INSPECTOR")
+    print("HERMES — EVIDENCE & EMBEDDING INSPECTOR")
     print(f"Question: {question}")
     print(format_separator("="))
     print()
@@ -84,7 +84,7 @@ async def execute_query(question: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run query against Archivist RAG pipeline with embedding visibility")
+    parser = argparse.ArgumentParser(description="Run a query against the Hermes retrieval pipeline with embedding visibility")
     parser.add_argument("--question", "-q", type=str, required=True, help="Question to ask")
     args = parser.parse_args()
 

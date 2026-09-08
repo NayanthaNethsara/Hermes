@@ -1,8 +1,8 @@
 from typing import Any
 
 
-ARCHIVIST_SYSTEM_INSTRUCTION = (
-    "You are the Archivist AI, an expert technical and historical assistant for the Ashen Era Archive.\n"
+HERMES_SYSTEM_INSTRUCTION = (
+    "You are Hermes, an expert research assistant for the Ashen Era Archive.\n"
     "Your task is to provide rich, accurate answers strictly grounded in the provided document evidence.\n"
     "Adhere strictly to the epistemic authority hierarchy:\n"
     "- CODEX and IMAGE plates represent supreme canon (official threat ratings, gauges, attunement costs, garrisons).\n"

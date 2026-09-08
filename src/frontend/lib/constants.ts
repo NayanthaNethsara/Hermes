@@ -1,6 +1,7 @@
 export const APP_NAME = "Hermes";
 export const TEAM_NAME = "TheKade";
-export const APP_DESCRIPTION = "Historical archive intelligence by TheKade.";
+export const APP_DESCRIPTION =
+  "Research assistant for the Ashen Era Archive.";
 
 export const DEFAULT_API_URL = "http://localhost:8000";
 

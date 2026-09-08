@@ -16,7 +16,7 @@ from src.backend.retrieval.vector_store import DocumentChunkModel, PostgresVecto
 router = APIRouter(tags=["retrieval"])
 
 
-@router.post("/retrieval/search", response_model=SearchResponse)
+@router.post("/retrieval/search", response_model=SearchResponse, summary="Hybrid search without the agent graph")
 async def search_documents(
     query_payload: SearchQuery,
     session: AsyncSession = Depends(get_database_session),
@@ -47,7 +47,7 @@ async def search_documents(
     return SearchResponse(results=top_chunks, referenced_figures=unique_figures)
 
 
-@router.get("/api/documents/{doc_id}")
+@router.get("/api/documents/{doc_id}", summary="Get a document with all of its chunks")
 @router.get("/retrieval/documents/{doc_id}")
 async def get_document_details(
     doc_id: str,
@@ -82,7 +82,7 @@ async def get_document_details(
     }
 
 
-@router.get("/api/visuals/{filename:path}")
+@router.get("/api/visuals/{filename:path}", summary="Get catalog metadata for a visual asset")
 @router.get("/retrieval/visuals/{filename:path}")
 async def get_visual_catalog_item(filename: str) -> dict[str, Any]:
     settings = get_settings()

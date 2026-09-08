@@ -17,25 +17,37 @@ from src.backend.retrieval.router import router as retrieval_router
 configure_logging()
 logger = get_logger("main")
 
+OPENAPI_TAGS = [
+    {"name": "agents", "description": "Ask questions and manage conversation sessions."},
+    {"name": "retrieval", "description": "Search the archive, inspect documents and visual assets."},
+    {"name": "system", "description": "Service health."},
+]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("archivist_backend_starting_up")
+    logger.info("hermes_backend_starting_up")
     await init_database()
     redis_healthy = await check_redis_health()
     logger.info("redis_health_status", healthy=redis_healthy)
     yield
     await close_redis_client()
-    logger.info("archivist_backend_shutting_down")
+    logger.info("hermes_backend_shutting_down")
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="The Archivist Backend",
-        description="Multimodal Research Assistant for the Ashen Era Archive",
+        title="Hermes API",
+        description=(
+            "Research assistant for the Ashen Era Archive.\n\n"
+            "`/api/ask/stream` and `/agents/stream` return Server-Sent Events and "
+            "cannot be exercised from this page; their event contract is documented "
+            "in `docs/api.md`."
+        ),
         version="0.2.0",
+        openapi_tags=OPENAPI_TAGS,
         lifespan=lifespan,
     )
 
@@ -60,12 +72,12 @@ def create_app() -> FastAPI:
     app.include_router(retrieval_router)
     app.include_router(agents_router)
 
-    @app.get("/api/health")
+    @app.get("/api/health", tags=["system"], summary="Service health")
     async def health_check() -> dict[str, str]:
         redis_healthy = await check_redis_health()
         return {
             "status": "ok",
-            "service": "archivist-backend",
+            "service": "hermes-backend",
             "redis": "connected" if redis_healthy else "unavailable",
         }
 

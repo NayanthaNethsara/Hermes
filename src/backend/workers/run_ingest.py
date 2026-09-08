@@ -194,7 +194,7 @@ async def run_ingestion_pipeline(
 
 
 def main() -> None:
-    arg_parser = argparse.ArgumentParser(description="Offline Ingestion Worker for The Archivist")
+    arg_parser = argparse.ArgumentParser(description="Offline ingestion worker for Hermes")
     arg_parser.add_argument("--archive-dir", type=Path, default=None, help="Path to raw archive directory")
     arg_parser.add_argument("--folder", type=str, default=None, help="Filter by folder names (comma-separated, e.g. 'images,wiki')")
     arg_parser.add_argument("--limit", type=int, default=None, help="Max number of files to process")

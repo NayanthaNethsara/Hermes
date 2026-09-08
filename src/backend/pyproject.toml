@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "archivist-backend"
+name = "hermes-backend"
 version = "0.1.0"
-description = "The Archivist - AI Research Assistant Backend"
+description = "Hermes by TheKade - research assistant backend"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

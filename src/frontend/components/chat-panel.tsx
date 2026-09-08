@@ -5,7 +5,7 @@ import type { ChatTurn } from "@/types/hermes";
 import { AnswerCard } from "@/components/answer-card";
 import { ChatInputBar } from "@/components/chat-input-bar";
 
-import { SUGGESTED_QUERIES } from "@/lib/constants";
+import { APP_DESCRIPTION, APP_NAME, SUGGESTED_QUERIES } from "@/lib/constants";
 
 export function ChatPanel({
   turns,
@@ -40,10 +40,10 @@ export function ChatPanel({
         <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col items-center justify-center px-4 py-12 max-w-2xl mx-auto w-full">
           <div className="text-center mb-8 space-y-1">
             <h1 className="text-2xl font-medium tracking-tight text-white">
-              Hermes
+              {APP_NAME}
             </h1>
             <p className="text-[#8e8e93] text-sm">
-              Historical archive intelligence by TheKade.
+              {APP_DESCRIPTION}
             </p>
           </div>
 

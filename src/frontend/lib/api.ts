@@ -2,6 +2,12 @@ import type {
   HermesResponse,
   DocumentDetails,
   VisualCatalogItem,
+  Source,
+  ReasoningStep,
+  Contradiction,
+  StreamStatusPayload,
+  StreamMetadataPayload,
+  StreamDonePayload,
 } from "@/types/hermes";
 import {
   AskQuerySchema,
@@ -11,6 +17,14 @@ import {
 import { API_BASE_URL, API_ENDPOINTS } from "@/lib/constants";
 export class HermesApiError extends Error {}
 
+
+export interface StreamHandlers {
+  onStatus?: (status: StreamStatusPayload) => void;
+  onMetadata?: (metadata: StreamMetadataPayload) => void;
+  onToken?: (delta: string) => void;
+  onDone?: (payload: StreamDonePayload) => void;
+  onError?: (error: Error) => void;
+}
 
 export async function askHermes(question: string): Promise<HermesResponse> {
   const validated = AskQuerySchema.parse({ question });
@@ -39,6 +53,142 @@ export async function askHermes(question: string): Promise<HermesResponse> {
   }
 
   return data as HermesResponse;
+}
+
+export async function askHermesStream(
+  question: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal
+): Promise<HermesResponse> {
+  const validated = AskQuerySchema.parse({ question });
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.ASK_STREAM}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: validated.question }),
+      signal,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Network error";
+    throw new HermesApiError(
+      `Could not reach the backend. Is it running at ${API_BASE_URL}? (${message})`
+    );
+  }
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    const message =
+      data && typeof data.error === "string"
+        ? data.error
+        : `Request failed with status ${response.status}`;
+    throw new HermesApiError(message);
+  }
+
+  if (!response.body) {
+    throw new HermesApiError("Response body is not readable for streaming.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  let accumulatedAnswer = "";
+  let sources: Source[] = [];
+  let referencedFigures: string[] = [];
+  let citations: string[] = [];
+  let reasoningSteps: ReasoningStep[] = [];
+  let contradictions: Contradiction[] = [];
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const eventBlock of events) {
+        if (!eventBlock.trim()) continue;
+
+        let eventType = "message";
+        let dataStr = "";
+
+        const lines = eventBlock.split("\n");
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            dataStr = line.slice(6).trim();
+          }
+        }
+
+        if (!dataStr) continue;
+
+        try {
+          const parsedData = JSON.parse(dataStr);
+
+          switch (eventType) {
+            case "status":
+              handlers.onStatus?.(parsedData as StreamStatusPayload);
+              break;
+
+            case "metadata": {
+              const meta = parsedData as StreamMetadataPayload;
+              sources = meta.sources || [];
+              referencedFigures = meta.referenced_figures || [];
+              citations = meta.citations || [];
+              reasoningSteps = meta.reasoning_steps || [];
+              handlers.onMetadata?.(meta);
+              break;
+            }
+
+            case "token": {
+              const delta = typeof parsedData.delta === "string" ? parsedData.delta : "";
+              accumulatedAnswer += delta;
+              handlers.onToken?.(delta);
+              break;
+            }
+
+            case "done": {
+              const donePayload = parsedData as StreamDonePayload;
+              if (donePayload.answer) accumulatedAnswer = donePayload.answer;
+              if (donePayload.sources) sources = donePayload.sources;
+              if (donePayload.referenced_figures) referencedFigures = donePayload.referenced_figures;
+              if (donePayload.citations) citations = donePayload.citations;
+              if (donePayload.reasoning_steps) reasoningSteps = donePayload.reasoning_steps;
+              if (donePayload.contradictions) contradictions = donePayload.contradictions;
+
+              handlers.onDone?.(donePayload);
+              break;
+            }
+
+            case "error": {
+              const errorMsg = parsedData.error || "Streaming error";
+              const err = new HermesApiError(errorMsg);
+              handlers.onError?.(err);
+              throw err;
+            }
+          }
+        } catch (jsonErr) {
+          if (jsonErr instanceof HermesApiError) throw jsonErr;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return {
+    answer: accumulatedAnswer,
+    reasoning_steps: reasoningSteps,
+    sources,
+    contradictions,
+    referenced_figures: referencedFigures,
+    citations,
+  };
 }
 
 export async function fetchDocumentDetails(docId: string): Promise<DocumentDetails> {

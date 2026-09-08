@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { askHermes, HermesApiError } from "@/lib/api";
+import { askHermesStream, HermesApiError } from "@/lib/api";
 import { ChatPanel } from "@/components/chat-panel";
 import { DocumentModal } from "@/components/document-modal";
 import { ImageLightbox } from "@/components/image-lightbox";
@@ -14,30 +14,117 @@ export function HermesApp() {
   const [selectedImagePath, setSelectedImagePath] = useState<string | null>(null);
 
   const handleSubmit = async (question: string) => {
-    setTurns((prev) => [...prev, { question, response: null }]);
+    setTurns((prev) => [
+      ...prev,
+      {
+        question,
+        response: null,
+        statusMessage: "Searching archive with hybrid vector search...",
+        isStreaming: true,
+      },
+    ]);
     setIsThinking(true);
 
-    const setLastResponse = (response: ChatTurn["response"]) => {
-      setTurns((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = { question, response };
-        return next;
-      });
-    };
-
     try {
-      const response = await askHermes(question);
-      setLastResponse(response);
+      await askHermesStream(question, {
+        onStatus: (status) => {
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const next = [...prev];
+            const lastIndex = next.length - 1;
+            next[lastIndex] = {
+              ...next[lastIndex],
+              statusMessage: status.message,
+            };
+            return next;
+          });
+        },
+        onMetadata: (metadata) => {
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const next = [...prev];
+            const lastIndex = next.length - 1;
+            const currentTurn = next[lastIndex];
+            next[lastIndex] = {
+              ...currentTurn,
+              response: {
+                answer: currentTurn.response?.answer || "",
+                sources: metadata.sources,
+                referenced_figures: metadata.referenced_figures,
+                citations: metadata.citations,
+                reasoning_steps: metadata.reasoning_steps,
+                contradictions: [],
+              },
+            };
+            return next;
+          });
+        },
+        onToken: (delta) => {
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const next = [...prev];
+            const lastIndex = next.length - 1;
+            const currentTurn = next[lastIndex];
+            const prevResponse = currentTurn.response;
+            next[lastIndex] = {
+              ...currentTurn,
+              statusMessage: undefined,
+              response: {
+                answer: (prevResponse?.answer || "") + delta,
+                sources: prevResponse?.sources || [],
+                referenced_figures: prevResponse?.referenced_figures || [],
+                citations: prevResponse?.citations || [],
+                reasoning_steps: prevResponse?.reasoning_steps || [],
+                contradictions: prevResponse?.contradictions || [],
+              },
+            };
+            return next;
+          });
+        },
+        onDone: (payload) => {
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const next = [...prev];
+            const lastIndex = next.length - 1;
+            const currentTurn = next[lastIndex];
+            next[lastIndex] = {
+              ...currentTurn,
+              isStreaming: false,
+              statusMessage: undefined,
+              response: {
+                answer: payload.answer || currentTurn.response?.answer || "",
+                sources: payload.sources || currentTurn.response?.sources || [],
+                referenced_figures: payload.referenced_figures || currentTurn.response?.referenced_figures || [],
+                citations: payload.citations || currentTurn.response?.citations || [],
+                reasoning_steps: payload.reasoning_steps || currentTurn.response?.reasoning_steps || [],
+                contradictions: payload.contradictions || [],
+              },
+            };
+            return next;
+          });
+        },
+      });
     } catch (error) {
       const message =
         error instanceof HermesApiError
           ? error.message
           : "Sorry, something went wrong answering that question.";
-      setLastResponse({
-        answer: message,
-        reasoning_steps: [],
-        sources: [],
-        contradictions: [],
+      setTurns((prev) => {
+        if (prev.length === 0) return prev;
+        const next = [...prev];
+        const lastIndex = next.length - 1;
+        next[lastIndex] = {
+          ...next[lastIndex],
+          isStreaming: false,
+          statusMessage: undefined,
+          response: {
+            answer: message,
+            reasoning_steps: [],
+            sources: [],
+            contradictions: [],
+          },
+        };
+        return next;
       });
     } finally {
       setIsThinking(false);

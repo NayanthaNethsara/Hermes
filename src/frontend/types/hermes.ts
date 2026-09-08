@@ -59,9 +59,33 @@ export interface VisualCatalogItem {
   rich_content?: string;
 }
 
+export interface StreamStatusPayload {
+  stage: string;
+  message: string;
+  iteration?: number;
+}
+
+export interface StreamMetadataPayload {
+  sources: Source[];
+  referenced_figures: string[];
+  citations: string[];
+  reasoning_steps: ReasoningStep[];
+}
+
+export interface StreamDonePayload {
+  answer: string;
+  referenced_figures: string[];
+  citations: string[];
+  sources?: Source[];
+  reasoning_steps?: ReasoningStep[];
+  contradictions: Contradiction[];
+}
+
 export interface ChatTurn {
   question: string;
   response: HermesResponse | null;
+  statusMessage?: string;
+  isStreaming?: boolean;
 }
 
 export interface AskQueryPayload {

@@ -9,6 +9,7 @@ export const API_BASE_URL =
 
 export const API_ENDPOINTS = {
   ASK: "/api/ask",
+  ASK_STREAM: "/api/ask/stream",
   DOCUMENTS: "/api/documents",
   VISUALS: "/api/visuals",
 } as const;
@@ -19,8 +20,28 @@ export const QUERY_CONSTRAINTS = {
 } as const;
 
 export const SUGGESTED_QUERIES = [
-  { label: "House Morvain", query: "What is the history of House Morvain?" },
-  { label: "Gauntlet of Sorrowfell", query: "What are the origins and powers of the Gauntlet of Sorrowfell?" },
-  { label: "Bleeding Crown", query: "What contradictions exist regarding the Bleeding Crown?" },
-  { label: "Malchior Cindervale", query: "Who was Malchior Cindervale and why was he called the Flame-Touched?" },
+  {
+    label: "Gauntlet of Sorrowfell",
+    query: "What motif is engraved on Gauntlet of Sorrowfell in its official illustration?",
+  },
+  {
+    label: "House Morvain Banner",
+    query: "What is the central emblem on the banner of House Morvain?",
+  },
+  {
+    label: "Weeping Lurker Threat",
+    query: "According to the official threat-classification plate, what numerical rating is assigned to the creature known as the Weeping Lurker?",
+  },
+  {
+    label: "Greyfell Citadel Garrison",
+    query: "According to the figure plate, what is the recorded garrison strength of Greyfell Citadel?",
+  },
+  {
+    label: "Ignatz Ashgrove Portrait",
+    query: "In the portrait of Ignatz Ashgrove the Oathless, what object are they holding?",
+  },
+  {
+    label: "Emberdeep Garrison",
+    query: "According to the figure plate illustrating Emberdeep’s forces, what is the recorded total of its garrison strength?",
+  },
 ] as const;

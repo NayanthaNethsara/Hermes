@@ -28,7 +28,8 @@ ARBITRATOR_SYSTEM_PROMPT = (
     "two different counts for one garrison, two different holders of one title.\n"
     "\n"
     "The following are NOT contradictions. Never report them:\n"
-    "- One source is silent on what another describes. Absence is not disagreement.\n"
+    "- When the question asks what an official illustration, plate, or figure depicts, the visual record of that plate is authoritative; narrative prose describing the object elsewhere does not contradict what the illustration depicts.\n"
+    "- One source is silent on what another describes. Absence is not disagreement (e.g., absence of a maker's stamp or forge mark does not contradict decorative engravings or motifs).\n"
     "- One source gives more or less detail than another.\n"
     "- Two sources describe different subjects, different moments, or different aspects.\n"
     "- A source hedges its own wording, or two sources use different words for the same thing.\n"
@@ -160,6 +161,13 @@ async def arbitrate_evidence(state: ConversationalInvestigatorState) -> dict[str
                 topic = str(item.get("topic", "")).strip().lower()
                 if topic and topic not in seen_topics:
                     seen_topics.add(topic)
+                    raw_sources = item.get("sources_disagree", [])
+                    cleaned_sources = [
+                        str(s).split("|")[0].strip()
+                        for s in raw_sources
+                        if str(s).strip()
+                    ]
+                    item["sources_disagree"] = cleaned_sources
                     contradictions.append(item)
     except Exception as err:
         logger.warning("arbitration_evaluation_failed", error=str(err))

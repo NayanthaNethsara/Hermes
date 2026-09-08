@@ -8,7 +8,7 @@ from src.backend.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-LLM_TIMEOUT_SECONDS = 120.0
+LLM_TIMEOUT_SECONDS = 45.0
 
 _model_cache: dict[float, BaseChatModel] = {}
 

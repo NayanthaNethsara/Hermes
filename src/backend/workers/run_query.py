@@ -18,12 +18,44 @@ async def execute_query(question: str) -> None:
     print(format_separator("="))
     print()
 
-    graph = build_unified_graph()
+    node_labels = {
+        "guardrail": "Input Guardrail & Intent Classification",
+        "planner": "Contextual Query Planning",
+        "retriever": "Hybrid Archive Retrieval",
+        "critic": "Sufficiency Review",
+        "arbitrator": "Epistemic Source Arbitration",
+        "synthesizer": "Evidence Synthesis",
+    }
+
+    print(format_separator("-"))
+    print("LIVE AGENT REASONING STREAM")
+    print(format_separator("-"))
+    sys.stdout.flush()
+
     initial_state = {
         "root_query": question,
         "messages": [HumanMessage(content=question)],
     }
-    result = await graph.ainvoke(initial_state)
+    graph = build_unified_graph()
+
+    result = {}
+    async for event in graph.astream_events(initial_state, version="v2"):
+        ev_type = event["event"]
+        name = event.get("name", "")
+
+        if ev_type == "on_chain_start" and name in node_labels:
+            print(f"--> [{node_labels[name]}] Executing...", flush=True)
+
+        elif ev_type == "on_chain_end" and name in node_labels:
+            output = event.get("data", {}).get("output", {})
+            if isinstance(output, dict):
+                result.update(output)
+                steps = output.get("reasoning_steps", [])
+                if steps:
+                    latest = steps[-1]
+                    print(f"    Result: {latest.get('found', '')}\n", flush=True)
+
+    print()
 
     reasoning_steps = result.get("reasoning_steps", [])
     if reasoning_steps:

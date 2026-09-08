@@ -204,7 +204,7 @@ export async function askHermesStream(
 }
 
 export async function fetchDocumentDetails(docId: string): Promise<DocumentDetails> {
-  const cleanId = docId.replace(/^\d+$/, "").trim() || docId;
+  const cleanId = docId.split("|")[0].trim().replace(/^\d+$/, "").trim() || docId;
   const validatedId = DocumentIdSchema.parse(cleanId);
 
   let response: Response;

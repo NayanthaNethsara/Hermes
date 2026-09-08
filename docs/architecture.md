@@ -1,392 +1,281 @@
-# Technical Architecture — The Archivist (Hermes)
+# Architecture
 
-**Sub-track:** 1C — Searching the Way a Human Does (primary)
-**Also addresses:** 1B — Connecting Facts Across Thousands of Pages (secondary)
+Hermes answers questions over the Ashen Era Archive. It is a retrieval pipeline
+with an agent graph on top: a question is classified, rewritten into a
+standalone query, answered from evidence retrieved by hybrid search, and
+checked for contradictions before an answer is streamed back.
 
----
-
-## 1. Overview
-
-The Archivist answers questions over the Ashen Era Archive using a LangGraph agent pipeline backed by PostgreSQL (pgvector for hybrid retrieval), Redis (caching + rate limiting), and Gemini (via `langchain-google-genai`). The system plans searches, reranks results with a cross-encoder, detects contradictions across an epistemic authority hierarchy, and streams answers via Server-Sent Events.
-
----
-
-## 2. System Diagram
+## 1. System overview
 
 ```mermaid
 flowchart TD
-    subgraph Client["Client Layer"]
-        FE["Next.js Frontend<br/>(App Router, SSE)"]
+    subgraph Client
+        FE["Next.js frontend<br/>App Router, SSE"]
     end
 
-    subgraph Backend["Backend API — FastAPI"]
-        MW["Rate Limit Middleware<br/>(Redis sliding window)"]
-        SVC["Agent Service<br/>(SSE streaming)"]
+    subgraph Service["FastAPI service"]
+        MW["Rate limit middleware"]
+        SVC["Agent service<br/>run and stream"]
 
-        subgraph Graph["LangGraph Agent Pipeline"]
-            GR["Guardrail<br/>(regex intent classifier)"]
-            PL["Planner<br/>(query rewriter)"]
-            RT["Retriever<br/>(hybrid search + reranker)"]
-            AR["Arbitrator<br/>(contradiction detector)"]
-            SY["Synthesizer<br/>(answer generator)"]
+        subgraph Graph["LangGraph pipeline"]
+            GR["Guardrail"]
+            PL["Planner"]
+            RT["Retriever"]
+            AR["Arbitrator"]
+            SY["Synthesizer"]
         end
     end
 
-    subgraph Data["Data Layer"]
-        PG[("PostgreSQL<br/>pgvector + sessions")]
-        RD[("Redis<br/>cache + rate limits")]
-        VY["Voyage AI<br/>(embeddings)"]
-        GM["Gemini<br/>(LLM)"]
+    subgraph Stores["Data layer"]
+        PG[("PostgreSQL<br/>pgvector, sessions, checkpoints")]
+        RD[("Redis<br/>cache, rate limits")]
     end
 
-    subgraph Offline["Offline Pipeline (run once)"]
-        ING["Ingestion Script"]
-        CORPUS[("Ashen Era Archive<br/>415 docs")]
+    subgraph External["External services"]
+        VY["Voyage AI<br/>embeddings, reranking"]
+        GM["Google Gemini<br/>language model"]
     end
 
-    FE -->|"POST /api/ask/stream"| MW --> SVC
-    SVC --> GR
+    subgraph Offline["Offline pipeline"]
+        CORPUS[("Raw archive")]
+        ING["Ingestion worker"]
+    end
 
-    GR -->|"is_conversational=true"| SY
-    GR -->|"is_conversational=false"| PL
-    PL --> RT
-    RT --> AR
-    AR --> SY
+    FE -->|"POST /api/ask/stream"| MW --> SVC --> GR
+    GR -->|conversational| SY
+    GR -->|research query| PL --> RT --> AR --> SY
 
-    RT -->|"embed query"| VY
-    RT -->|"hybrid search"| PG
-    RT <-->|"retrieval cache"| RD
+    RT --> VY
+    RT --> PG
+    RT <--> RD
+    PL --> GM
+    AR --> GM
+    SY --> GM
 
-    PL -->|"rewrite query"| GM
-    AR -->|"detect contradictions"| GM
-    SY -->|"generate answer"| GM
-
-    SY -->|"SSE tokens"| FE
-    SVC -->|"persist session"| PG
-
-    CORPUS --> ING -->|"chunks + embeddings"| PG
+    SY -->|SSE tokens| FE
+    SVC -->|persist turn| PG
+    CORPUS --> ING -->|chunks and embeddings| PG
 ```
 
----
-
-## 3. Agent Graph — Request Flow
+## 2. Agent pipeline
 
 ```mermaid
 flowchart LR
-    START(("START")) --> GR["Guardrail"]
-
-    GR -->|"greeting / chitchat"| SY["Synthesizer"]
-    GR -->|"research query"| PL["Planner"]
-
+    START(("start")) --> GR["Guardrail"]
+    GR -->|conversational| SY["Synthesizer"]
+    GR -->|research query| PL["Planner"]
     PL --> RT["Retriever"]
     RT --> AR["Arbitrator"]
     AR --> SY
-
-    SY --> END_(("END"))
-
-    style GR fill:#2d2d3f,stroke:#6366f1
-    style PL fill:#2d2d3f,stroke:#8b5cf6
-    style RT fill:#2d2d3f,stroke:#06b6d4
-    style AR fill:#2d2d3f,stroke:#f59e0b
-    style SY fill:#2d2d3f,stroke:#10b981
+    SY --> FIN(("end"))
 ```
 
-### LLM Call Budget per Query
+The graph is defined in `src/backend/agents/graphs/workflow.py` and compiled
+once per process with a PostgreSQL checkpointer, so conversation state survives
+across turns and restarts. If the checkpointer cannot be created the graph
+falls back to an in-memory saver.
 
-| Query Type | Nodes Executed | LLM Calls | Details |
-|---|---|---|---|
-| Greeting ("hi", "bye") | Guardrail → Synthesizer | **1** | Guardrail is regex-only; Synthesizer generates greeting |
-| First research question | All 5 | **1** | Planner short-circuits (no history to rewrite) |
-| Follow-up (uniform authority) | All 5 | **2** | Planner rewrites + Synthesizer answers |
-| Follow-up (mixed authority) | All 5 | **3** | Planner + Arbitrator + Synthesizer |
+### Guardrail
 
-### Sequence Diagram
+`agents/nodes/guardrail.py`. Regex-only intent classification, no model call.
+Greetings, pleasantries and meta-questions set `is_conversational`, which routes
+the request straight to the synthesizer and skips planning, retrieval and
+arbitration.
+
+### Planner
+
+`agents/nodes/planner.py`. Rewrites the latest question into a standalone
+retrieval query by resolving pronouns against the last few dialogue turns plus
+the rolling session summary. Outputs `rewritten_query` and one or two
+`search_terms`. On the first turn there is no history to resolve, so the node
+passes the query through without calling the model.
+
+### Retriever
+
+`agents/nodes/retriever.py` and `retrieval/`. Embeds the query with Voyage AI,
+runs a hybrid search in PostgreSQL, and reranks the candidates with a
+cross-encoder. Details in section 3.
+
+### Arbitrator
+
+`agents/nodes/arbitrator.py`. Sorts the retrieved chunks by authority weight and
+then relevance. It calls the model only when the evidence actually spans
+different authority levels, that is when at least two distinct weights are
+present and the lowest is below 0.8. Otherwise no contradiction is possible
+between equally authoritative sources and the node returns an empty list.
+Detected conflicts are returned as `{topic, sources_disagree}` objects.
+
+### Synthesizer
+
+`agents/nodes/synthesizer.py`. Streams the final answer token by token. It runs
+in two modes: a grounded research answer built from the verified evidence, or a
+short conversational reply for the greeting fast path. Figures referenced in the
+answer are mapped back to the assets served under `/assets`.
+
+## 3. Retrieval
+
+1. The normalized query is hashed and looked up in Redis. A hit returns the
+   cached chunks immediately.
+2. On a miss the query is embedded with the Voyage model configured in
+   `VOYAGE_MODEL`.
+3. PostgreSQL runs two searches: pgvector cosine similarity over the chunk
+   embeddings and a full-text search over the same chunks. Both result lists are
+   fused in SQL with Reciprocal Rank Fusion, producing up to
+   `RETRIEVAL_CANDIDATE_LIMIT` candidates.
+4. The Voyage cross-encoder reranks those candidates. Anything below
+   `RERANK_SCORE_THRESHOLD` is discarded and the top `RERANK_TOP_K` chunks move
+   forward.
+5. The result is written back to Redis with `REDIS_CACHE_TTL_SECONDS`.
+
+Redis is treated as optional. If it is unavailable the retriever logs a warning
+and proceeds without a cache.
+
+## 4. Source authority
+
+Every chunk is tagged at ingestion with its source category and a corresponding
+authority weight. The weights are configurable, see
+[configuration.md](configuration.md).
+
+| Category | Weight | Meaning |
+|---|---|---|
+| Codex, image plates | 1.0 | Official reference, treated as canon |
+| Wiki | 0.8 | Curated consensus |
+| Novel, chronicles | 0.6 | Narrative accounts, subject to perspective |
+| Ephemera | 0.4 | Letters, ledgers, ballads, unverified |
+
+The arbitrator uses these weights to order evidence and to decide whether a
+contradiction check is worth a model call. The synthesizer is instructed to
+uphold the higher-tier source when sources conflict and to report the
+disagreement rather than hide it.
+
+Each source in an API response also carries a `trust` field for display. It is
+`high` for codex and image sources or any source that reranked above 0.7, and
+`medium` otherwise.
+
+## 5. Request lifecycle
 
 ```mermaid
 sequenceDiagram
-    participant U as User (Browser)
-    participant FE as Next.js Frontend
-    participant API as FastAPI Backend
-    participant GR as Guardrail
-    participant PL as Planner
-    participant RT as Retriever
-    participant AR as Arbitrator
-    participant SY as Synthesizer
+    participant U as User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant G as Agent graph
     participant PG as PostgreSQL
     participant RD as Redis
-    participant GM as Gemini LLM
-    participant VY as Voyage AI
+    participant EXT as Voyage / Gemini
 
     U->>FE: Submit question
-    FE->>API: POST /api/ask/stream {question, session_id}
-    Note over API: Rate limit check (Redis)
+    FE->>API: POST /api/ask/stream
+    Note over API: Rate limit check in Redis
+    API->>G: Invoke graph with session thread id
 
-    API->>GR: Classify intent (regex)
-    GR-->>API: is_conversational: false
+    G-->>FE: status: guardrail
+    G-->>FE: status: planning
+    G->>EXT: Rewrite query (follow-up turns only)
 
-    API->>PL: Rewrite query with history
-    alt Follow-up question (messages > 1)
-        PL->>GM: Rewrite with context
-        GM-->>PL: Standalone query + search terms
-    else First question
-        Note over PL: Pass-through (no LLM call)
+    G-->>FE: status: retrieving
+    G->>RD: Cache lookup
+    G->>EXT: Embed query (on miss)
+    G->>PG: Hybrid search and rerank
+    G-->>FE: metadata: sources, figures, citations
+
+    G-->>FE: status: arbitrating
+    G->>EXT: Detect contradictions (mixed authority only)
+    G-->>FE: metadata: contradictions
+
+    G-->>FE: status: synthesizing
+    loop Token stream
+        G->>EXT: Generate
+        G-->>FE: token
     end
 
-    API->>RT: Retrieve evidence
-    RT->>RD: Check cache
-    alt Cache miss
-        RT->>VY: Embed query
-        VY-->>RT: Query vector
-        RT->>PG: Hybrid search (vector + full-text RRF)
-        PG-->>RT: Top 50 candidates
-        Note over RT: Cross-encoder rerank → top 5
-        RT->>RD: Cache results
-    else Cache hit
-        RD-->>RT: Cached chunks
-    end
-
-    API-->>FE: SSE: metadata {sources, figures, citations}
-
-    API->>AR: Arbitrate evidence
-    alt Mixed authority weights
-        AR->>GM: Detect contradictions
-        GM-->>AR: Contradiction list
-    else Uniform authority
-        Note over AR: Skip LLM (no conflict possible)
-    end
-
-    API-->>FE: SSE: metadata {contradictions}
-
-    API->>SY: Synthesize answer
-    SY->>GM: Stream answer generation
-    loop Token streaming
-        GM-->>SY: Token chunk
-        SY-->>API: Token
-        API-->>FE: SSE: token {delta}
-    end
-
-    API->>PG: Persist session
-    API-->>FE: SSE: done {answer, sources, reasoning_steps}
-    FE-->>U: Render answer + sources + trace
+    API->>PG: Persist the turn
+    G-->>FE: done: full payload
+    FE-->>U: Answer, sources, reasoning trace
 ```
 
----
+Model calls per question:
 
-## 4. Components
+| Question type | Nodes run | Model calls |
+|---|---|---|
+| Greeting | Guardrail, Synthesizer | 1 |
+| First research question | All five | 1 |
+| Follow-up, uniform authority | All five | 2 |
+| Follow-up, mixed authority | All five | 3 |
 
-### 4.1 Guardrail Node
-- Regex-based intent classifier — zero LLM calls
-- Matches greetings, pleasantries, meta-questions ("who are you", "help")
-- Sets `is_conversational: true` to trigger the conditional edge that bypasses planner/retriever/arbitrator
+## 6. Frontend
 
-### 4.2 Planner Node
-- Rewrites follow-up questions into standalone queries by resolving pronouns against recent dialogue history
-- Uses last 3 messages + session summary for context
-- Outputs `rewritten_query` + `search_terms` (1-2 optimized search queries)
-- **Skips LLM call on first turn** (no history to resolve)
+Next.js App Router. `/` redirects to `/chat`, which generates a session id and
+replaces the URL with `/chat/<sessionId>`. Loading that URL directly fetches the
+session from the backend; a 404 is treated as a new, empty session.
 
-### 4.3 Retriever Node
-- Hybrid search: pgvector cosine similarity + PostgreSQL full-text search, fused via Reciprocal Rank Fusion (RRF)
-- Cross-encoder reranking (top 50 candidates → top 5)
-- Redis caching: SHA-256 query hash as key, configurable TTL
-- Fail-open: if Redis is down, proceeds without cache
+`components/hermes-app.tsx` owns session state and the SSE connection. The
+answer card renders Markdown, source cards with trust badges, embedded figures,
+and a collapsible trace of what each node did. The sidebar lists past sessions
+with relative timestamps and supports delete and new chat.
 
-### 4.4 Arbitrator Node
-- Sorts chunks by epistemic weight × relevance score
-- **Only invokes the LLM when mixed authority levels are present** (e.g., codex + novel sources)
-- Detects factual contradictions (conflicting dates, counts, allegiances)
-- Deduplicates contradiction topics
+## 7. Data model
 
-### 4.5 Synthesizer Node
-- Streams the final answer via LLM with full evidence context
-- Two modes: research answer (with source context) or conversational greeting
-- Extracts referenced figures and maps them to embedded visuals
-
-### 4.6 Backend API (FastAPI)
-- `POST /api/ask/stream` — SSE streaming endpoint (primary)
-- `POST /api/ask` — synchronous endpoint (fallback)
-- `GET /api/sessions` — list all sessions
-- `GET /api/sessions/:id` — load session with full turn history
-- `DELETE /api/sessions/:id` — delete a session
-- `GET /api/documents/:id` — document detail view
-- `GET /api/visuals/:filename` — visual asset metadata
-- Rate limiting: 30 requests/min per IP (Redis sliding window, fail-open)
-
-### 4.7 Frontend (Next.js App Router)
-- URL-based session routing: `/chat` (new) → `/chat/<sessionId>` (active)
-- SSE streaming: renders answer tokens, status updates, and reasoning trace in real-time
-- Sidebar: session history with relative timestamps, delete, new chat
-- Answer cards: markdown rendering, source citations with trust badges, figure embedding
-- Investigation trace: collapsible timeline of each agent node's actions
-
-### 4.8 Session Persistence
-- PostgreSQL `session_history` table: stores question/response turns per session_id
-- Auto-generates session titles from the first question
-- LangGraph checkpoint: `AsyncPostgresSaver` for graph state persistence across turns
-
----
-
-## 5. Data Model
-
-### Trust Tiers (assigned at ingestion based on document category)
-
-| Tier | Source Category | Authority Weight | Meaning |
-|---|---|---|---|
-| `high` | Codex, Image plates | 1.0 | Official reference, supreme canon |
-| `medium` | Wiki articles | 0.8 | Curated consensus lore |
-| `medium-low` | Novels, Chronicles | 0.6 | Narrative accounts, possible POV bias |
-| `low` | Ephemera (letters, ledgers, ballads) | 0.4 | Personal, unverified accounts |
-
-### Chunk Schema (PostgreSQL `document_chunks` table)
+Chunks live in the `document_chunks` table, one row per chunk:
 
 ```json
 {
   "chunk_id": "codex_vol2_p114_c3",
   "doc_id": "codex_vol2",
   "content": "...",
-  "section_title": "Chapter 4: The Forging",
-  "embedding": [0.012, -0.034, ...],
+  "embedding": [0.012, -0.034],
   "metadata_payload": {
     "source_category": "codex",
     "epistemic_weight": 1.0,
-    "page_number": 114
-  },
-  "figure_references": ["assets/plates/codex_vol2_plate7.png"]
+    "section_title": "Chapter 4",
+    "figure_references": ["plates/codex_vol2_plate7.png"]
+  }
 }
 ```
 
----
+Conversations live in a chat session table: one row per session holding the
+ordered question and response turns, an auto-generated title derived from the
+first question, and a rolling summary used by the planner. LangGraph
+checkpoints are stored in their own tables in the same database, keyed by
+session id.
 
-## 6. API Contract
+## 8. Ingestion
 
-### `POST /api/ask/stream`
+`src/backend/workers/run_ingest.py` walks `RAW_ARCHIVE_DIR`, parses each
+document with Docling (PyMuPDF as fallback), crops figures and tables into
+`ASSETS_DIR`, chunks the text semantically, embeds each chunk with Voyage AI,
+and writes rows into `document_chunks`. Already-ingested files are skipped
+unless `--force` is passed.
 
-Request:
-```json
-{
-  "question": "In the portrait of Ignatz Ashgrove, what object are they holding?",
-  "session_id": "uuid-here"
-}
+```bash
+make ingest                                    # everything
+make ingest-wiki                               # one folder
+python -m src.backend.workers.run_ingest --folder images --limit 20
 ```
 
-SSE Events:
-```
-event: status
-data: {"stage": "retrieving", "message": "Searching archive with hybrid vector search..."}
+## 9. Operational behaviour
 
-event: metadata
-data: {"sources": [...], "referenced_figures": [...], "citations": [...], "reasoning_steps": [...]}
+- **Rate limiting.** `REDIS_RATE_LIMIT_REQUESTS` per `REDIS_RATE_LIMIT_WINDOW_SECONDS`
+  per client IP, enforced by middleware. Fails open when Redis is down.
+- **Caching.** Retrieval results and the session list are cached in Redis and
+  invalidated on write. Fails open.
+- **Model client reuse.** Chat model instances are cached per temperature so
+  nodes do not re-initialize a client on every invocation.
+- **Provider fallback.** Gemini is used when `GCP_PROJECT_ID` or a Gemini API
+  key is present, otherwise OpenRouter if configured, otherwise a stub model
+  that returns a configuration message instead of failing at import time.
+- **Persistence.** Sessions and graph checkpoints are in PostgreSQL, so a
+  restart does not lose conversation state.
 
-event: token
-data: {"delta": "According to "}
+## 10. Tech stack
 
-event: done
-data: {"answer": "...", "sources": [...], "reasoning_steps": [...], "contradictions": [...]}
-```
-
-### `POST /api/ask`
-
-Synchronous equivalent — returns the full response as a single JSON object:
-```json
-{
-  "answer": "string",
-  "reasoning_steps": [
-    {"step": 1, "action": "Input Guardrail & Intent Classification", "found": "..."},
-    {"step": 2, "action": "Contextual Query Planning", "found": "..."},
-    {"step": 3, "action": "Hybrid Archive Retrieval", "found": "..."},
-    {"step": 4, "action": "Epistemic Source Arbitration", "found": "..."},
-    {"step": 5, "action": "Evidence Synthesis", "found": "..."}
-  ],
-  "sources": [
-    {"title": "codex_vol2", "trust": "high", "snippet": "...", "relevance_score": 0.91}
-  ],
-  "contradictions": [
-    {"topic": "Forging year of the artifact", "sources_disagree": ["codex_vol2", "ballad_7"]}
-  ]
-}
-```
-
----
-
-## 7. Codebase Structure
-
-```
-src/
-├── backend/
-│   ├── main.py                  # FastAPI app, route definitions
-│   ├── agents/
-│   │   ├── graphs/
-│   │   │   └── workflow.py      # LangGraph definition (conditional edges)
-│   │   ├── nodes/
-│   │   │   ├── guardrail.py     # Intent classification (regex)
-│   │   │   ├── planner.py       # Query rewriting with history
-│   │   │   ├── retriever.py     # Hybrid search + caching
-│   │   │   ├── arbitrator.py    # Contradiction detection
-│   │   │   └── synthesizer.py   # Answer streaming
-│   │   ├── llm.py               # LLM factory (cached instances)
-│   │   ├── prompts.py           # System instructions + prompt builders
-│   │   ├── service.py           # AgentService (run + stream)
-│   │   ├── sessions.py          # Session persistence
-│   │   └── state/
-│   │       └── models.py        # ConversationalInvestigatorState
-│   ├── core/
-│   │   ├── config.py            # Settings (pydantic-settings)
-│   │   ├── database.py          # PostgreSQL connection pool
-│   │   ├── redis.py             # Redis caching layer (fail-open)
-│   │   ├── rate_limit.py        # IP-based rate limiter
-│   │   └── logging.py           # Structured logging (structlog)
-│   ├── ingestion/               # Corpus parsing, chunking, embedding
-│   └── retrieval/
-│       ├── vector_store.py      # pgvector hybrid search + RRF
-│       ├── reranker.py          # Cross-encoder reranking
-│       └── schemas.py           # SearchResultChunk model
-├── frontend/
-│   ├── app/
-│   │   ├── page.tsx             # Root redirect → /chat
-│   │   ├── chat/
-│   │   │   ├── layout.tsx       # Shared chat layout
-│   │   │   ├── page.tsx         # New session entry point
-│   │   │   └── [sessionId]/
-│   │   │       └── page.tsx     # Dynamic session route
-│   │   └── layout.tsx           # Root layout
-│   ├── components/
-│   │   ├── hermes-app.tsx       # Main app shell (router-driven sessions)
-│   │   ├── chat-panel.tsx       # Message list + input
-│   │   ├── chat-sidebar.tsx     # Session history sidebar (next/link)
-│   │   ├── answer-card.tsx      # Answer rendering + reasoning trace
-│   │   ├── chat-input-bar.tsx   # Query input with suggestions
-│   │   ├── document-modal.tsx   # Source document viewer
-│   │   └── image-lightbox.tsx   # Figure viewer
-│   └── lib/
-│       ├── api.ts               # SSE streaming client
-│       ├── constants.ts         # App config + suggested queries
-│       └── validation/          # Zod schemas
-docker-compose.yml               # PostgreSQL + Redis services
-Makefile                         # dev commands (make backend, make frontend, make db)
-```
-
----
-
-## 8. Tech Stack
-
-| Layer | Tool | Purpose |
-|---|---|---|
-| Backend Framework | FastAPI | Async API + SSE streaming |
-| Agent Orchestration | LangGraph | Conditional graph with checkpointing |
-| Vector Database | PostgreSQL + pgvector | Hybrid vector + full-text search |
-| Caching | Redis 7 | Retrieval cache + rate limit counters |
-| Embeddings | Voyage AI (`voyage-3.5-lite`) | 1024-dim document/query embeddings |
-| LLM | Google Gemini (`gemini-2.5-flash`) | Planner, Arbitrator, Synthesizer |
-| Reranking | Cross-encoder | Relevance reranking of search candidates |
-| Frontend | Next.js 16 (App Router) | SSE streaming + URL-based routing |
-| Styling | Tailwind CSS v4 | Utility-first dark theme |
-
----
-
-## 9. Non-Functional Notes
-
-- **Rate limiting:** 30 requests/minute per IP, Redis sliding window. Fails open if Redis is unavailable.
-- **Model caching:** LLM instances are cached per temperature to avoid re-initializing the client on every node invocation.
-- **Retrieval caching:** SHA-256 query hash → Redis, configurable TTL. Eliminates redundant embedding + search calls for repeated queries.
-- **Session persistence:** PostgreSQL-backed. Sessions survive server restarts. LangGraph checkpoints maintain conversation state across turns.
-- **Fail-open design:** Redis and rate limiting are designed to degrade gracefully — if Redis is down, the system logs a warning and proceeds without caching.
+| Layer | Choice |
+|---|---|
+| API | FastAPI with SSE streaming |
+| Agent orchestration | LangGraph with a PostgreSQL checkpointer |
+| Storage and search | PostgreSQL 16 with pgvector, full-text search, RRF |
+| Cache and limits | Redis 7 |
+| Embeddings and reranking | Voyage AI |
+| Language model | Google Gemini, OpenRouter fallback |
+| Document parsing | Docling with a PyMuPDF fallback |
+| Frontend | Next.js App Router, React, Tailwind CSS |

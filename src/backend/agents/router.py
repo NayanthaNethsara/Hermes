@@ -21,7 +21,7 @@ STREAM_HEADERS = {
 }
 
 
-@router.post("/agents/run", response_model=AgentRunResponse)
+@router.post("/agents/run", response_model=AgentRunResponse, summary="Ask a question")
 @router.post("/agents/run/{track_id}", response_model=AgentRunResponse, include_in_schema=False)
 async def run_agent(
     payload: AgentRunRequest,
@@ -34,7 +34,7 @@ async def run_agent(
     )
 
 
-@router.post("/api/ask", response_model=AgentRunResponse)
+@router.post("/api/ask", response_model=AgentRunResponse, summary="Ask a question")
 async def ask_endpoint(payload: AskRequest) -> AgentRunResponse:
     return await AgentService.run(
         query=payload.question,
@@ -43,7 +43,7 @@ async def ask_endpoint(payload: AskRequest) -> AgentRunResponse:
     )
 
 
-@router.post("/agents/stream")
+@router.post("/agents/stream", summary="Ask a question, streamed as SSE")
 @router.post("/agents/stream/{track_id}", include_in_schema=False)
 async def run_agent_stream(
     payload: AgentRunRequest,
@@ -60,7 +60,7 @@ async def run_agent_stream(
     )
 
 
-@router.post("/api/ask/stream")
+@router.post("/api/ask/stream", summary="Ask a question, streamed as SSE")
 async def ask_stream_endpoint(payload: AskRequest) -> StreamingResponse:
     return StreamingResponse(
         AgentService.stream(
@@ -73,12 +73,12 @@ async def ask_stream_endpoint(payload: AskRequest) -> StreamingResponse:
     )
 
 
-@router.get("/api/sessions")
+@router.get("/api/sessions", summary="List sessions")
 async def get_all_sessions() -> list[dict[str, Any]]:
     return await list_sessions()
 
 
-@router.get("/api/sessions/{session_id}")
+@router.get("/api/sessions/{session_id}", summary="Get one session with its turns")
 async def get_session_by_id(session_id: str) -> dict[str, Any]:
     session = await get_session(session_id)
     if session is None:
@@ -86,7 +86,7 @@ async def get_session_by_id(session_id: str) -> dict[str, Any]:
     return session
 
 
-@router.delete("/api/sessions/{session_id}")
+@router.delete("/api/sessions/{session_id}", summary="Delete a session")
 async def remove_session_by_id(session_id: str) -> dict[str, bool]:
     is_deleted = await delete_session(session_id)
     if not is_deleted:

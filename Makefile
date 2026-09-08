@@ -1,4 +1,4 @@
-# The Archivist Makefile
+# Hermes by TheKade — Makefile
 
 .DEFAULT_GOAL := help
 
@@ -14,7 +14,7 @@ Q ?= In which year was the 'Gauntlet of Sorrowfell' actually forged?
 .PHONY: help setup setup-backend setup-frontend backend frontend health ask clean docker-build docker-up docker-down docker-logs export-chat redis
 
 help:
-	@echo "The Archivist - Command Reference"
+	@echo "Hermes - Command Reference"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make setup            Install backend (src/backend) and frontend dependencies"

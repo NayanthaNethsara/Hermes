@@ -11,7 +11,7 @@ HOST ?= 127.0.0.1
 PORT ?= 8000
 Q ?= In which year was the 'Gauntlet of Sorrowfell' actually forged?
 
-.PHONY: help setup setup-backend setup-frontend backend frontend health ask clean docker-build docker-up docker-down docker-logs export-chat
+.PHONY: help setup setup-backend setup-frontend backend frontend health ask clean docker-build docker-up docker-down docker-logs export-chat redis
 
 help:
 	@echo "The Archivist - Command Reference"
@@ -22,8 +22,9 @@ help:
 	@echo "  make setup-frontend   Install frontend node_modules"
 	@echo ""
 	@echo "Services:"
-	@echo "  make db               Start PostgreSQL + pgvector container"
-	@echo "  make db-down          Stop PostgreSQL container"
+	@echo "  make db               Start PostgreSQL + pgvector and Redis containers"
+	@echo "  make redis            Start Redis container only"
+	@echo "  make db-down          Stop PostgreSQL and Redis containers"
 	@echo "  make backend          Start FastAPI backend server (port $(PORT))"
 	@echo "  make frontend         Start Next.js frontend dev server"
 	@echo ""
@@ -67,14 +68,17 @@ setup-frontend:
 setup: setup-backend setup-frontend
 
 db:
-	docker compose up -d db
+	docker compose up -d db redis
+
+redis:
+	docker compose up -d redis
 
 db-down:
-	docker compose stop db
+	docker compose stop db redis
 
 db-clean:
 	docker compose down -v
-	docker compose up -d db
+	docker compose up -d db redis
 
 backend:
 	$(UVICORN) src.backend.main:app --reload --host $(HOST) --port $(PORT)

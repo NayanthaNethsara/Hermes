@@ -1,3 +1,5 @@
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.backend.agents.llm import get_chat_model

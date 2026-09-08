@@ -1,3 +1,5 @@
+from typing import Any
+
 from src.backend.agents.state.models import AgentState
 from src.backend.core.database import session_scope
 from src.backend.ingestion.embedder import MultimodalEmbedder

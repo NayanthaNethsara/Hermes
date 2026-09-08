@@ -20,16 +20,47 @@ async def process_document(
     chunker: DocumentChunker,
     embedder: MultimodalEmbedder,
     store: PostgresVectorStore,
+    force: bool = False,
 ) -> int:
+    file_hash = compute_file_hash(file_path)
+
+    if not force:
+        already_processed = await store.has_document(file_hash)
+        if already_processed:
+            logger.info("file_already_processed_skipping", file=file_path.name, hash=file_hash[:10])
+            return 0
+    else:
+        await store.delete_document(file_hash)
+
     metadata, figures, tables, text_content = parser.parse_document(file_path)
     chunks = chunker.chunk_document(metadata, text_content, figures, tables)
 
     if not chunks:
-        logger.info("no_chunks_generated", file=str(file_path))
+        logger.info("no_chunks_generated", file=file_path.name)
+        await store.record_document(
+            doc_id=metadata.doc_id,
+            file_hash=metadata.file_hash,
+            file_path=str(file_path),
+            source_category=metadata.source_category.value,
+            epistemic_weight=metadata.epistemic_weight,
+            chunk_count=0,
+            figure_count=len(figures),
+        )
         return 0
 
     texts_to_embed = [chunk.content for chunk in chunks]
     embeddings = await embedder.embed_texts(texts_to_embed, input_type="document")
+
+    # Record parent document first to satisfy foreign key constraint
+    await store.record_document(
+        doc_id=metadata.doc_id,
+        file_hash=metadata.file_hash,
+        file_path=str(file_path),
+        source_category=metadata.source_category.value,
+        epistemic_weight=metadata.epistemic_weight,
+        chunk_count=len(chunks),
+        figure_count=len(figures),
+    )
 
     insert_payloads: list[dict] = []
     for chunk, vector in zip(chunks, embeddings):
@@ -47,11 +78,23 @@ async def process_document(
         })
 
     await store.insert_chunks(insert_payloads)
-    logger.info("document_ingested", doc_id=metadata.doc_id, chunks_count=len(chunks))
+
+    logger.info(
+        "document_ingested",
+        doc_id=metadata.doc_id,
+        chunks=len(chunks),
+        figures=len(figures),
+        category=metadata.source_category.value,
+    )
     return len(chunks)
 
 
-async def run_ingestion_pipeline(archive_dir: Path, force: bool = False) -> None:
+async def run_ingestion_pipeline(
+    archive_dir: Path | None = None,
+    folder_filter: str | None = None,
+    limit: int | None = None,
+    force: bool = False,
+) -> None:
     settings = get_settings()
     target_dir = archive_dir or settings.raw_archive_dir
 
@@ -59,7 +102,7 @@ async def run_ingestion_pipeline(archive_dir: Path, force: bool = False) -> None
         logger.error("archive_directory_not_found", path=str(target_dir))
         return
 
-    logger.info("starting_ingestion_worker", target_directory=str(target_dir))
+    logger.info("starting_ingestion_pipeline", target_directory=str(target_dir), force=force)
     await init_database()
 
     parser = DocumentParser()
@@ -67,34 +110,75 @@ async def run_ingestion_pipeline(archive_dir: Path, force: bool = False) -> None
     embedder = MultimodalEmbedder()
 
     supported_extensions = {".pdf", ".docx", ".md", ".txt", ".png", ".jpg", ".jpeg"}
-    files_to_process = [
+    all_files = [
         p for p in target_dir.rglob("*")
         if p.is_file() and p.suffix.lower() in supported_extensions and not p.name.startswith(".")
     ]
 
-    logger.info("files_discovered", count=len(files_to_process))
+    if folder_filter:
+        folders = [f.strip().lower() for f in folder_filter.split(",")]
+        all_files = [
+            p for p in all_files if any(folder in p.parts for folder in folders)
+        ]
+
+    # Prioritize visual figures plates and wiki lore first
+    def sort_priority(path: Path) -> int:
+        parts = [p.lower() for p in path.parts]
+        if "images" in parts:
+            return 0
+        if "wiki" in parts:
+            return 1
+        if "codex" in parts:
+            return 2
+        return 3
+
+    all_files.sort(key=sort_priority)
+
+    if limit and limit > 0:
+        all_files = all_files[:limit]
+
+    logger.info("files_queued_for_processing", total_files=len(all_files))
     total_chunks = 0
 
-    async with session_scope() as session:
-        store = PostgresVectorStore(session)
-        for index, file_path in enumerate(files_to_process, 1):
-            logger.info("processing_file", index=index, total=len(files_to_process), file=file_path.name)
-            try:
-                count = await process_document(file_path, parser, chunker, embedder, store)
-                total_chunks += count
-            except Exception as error:
-                logger.error("file_processing_error", file=str(file_path), error_detail=str(error))
+    for index, file_path in enumerate(all_files, 1):
+        try:
+            async with session_scope() as session:
+                store = PostgresVectorStore(session)
+                chunk_count = await process_document(
+                    file_path=file_path,
+                    parser=parser,
+                    chunker=chunker,
+                    embedder=embedder,
+                    store=store,
+                    force=force,
+                )
+                total_chunks += chunk_count
+        except Exception as error:
+            logger.error(
+                "file_ingestion_failed",
+                file=file_path.name,
+                error_detail=str(error),
+            )
 
-    logger.info("ingestion_worker_completed", total_chunks=total_chunks)
+    logger.info("ingestion_pipeline_complete", total_chunks=total_chunks)
 
 
 def main() -> None:
     arg_parser = argparse.ArgumentParser(description="Offline Ingestion Worker for The Archivist")
     arg_parser.add_argument("--archive-dir", type=Path, default=None, help="Path to raw archive directory")
+    arg_parser.add_argument("--folder", type=str, default=None, help="Filter by folder names (comma-separated, e.g. 'images,wiki')")
+    arg_parser.add_argument("--limit", type=int, default=None, help="Max number of files to process")
     arg_parser.add_argument("--force", action="store_true", help="Reprocess files even if already ingested")
     args = arg_parser.parse_args()
 
-    asyncio.run(run_ingestion_pipeline(archive_dir=args.archive_dir, force=args.force))
+    asyncio.run(
+        run_ingestion_pipeline(
+            archive_dir=args.archive_dir,
+            folder_filter=args.folder,
+            limit=args.limit,
+            force=args.force,
+        )
+    )
 
 
 if __name__ == "__main__":

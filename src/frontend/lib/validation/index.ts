@@ -10,6 +10,7 @@ export const AskQuerySchema = z.object({
       QUERY_CONSTRAINTS.MAX_LENGTH,
       `Question is too long (maximum ${QUERY_CONSTRAINTS.MAX_LENGTH} characters).`
     ),
+  sessionId: z.string().optional(),
 });
 
 export type AskQueryInput = z.infer<typeof AskQuerySchema>;

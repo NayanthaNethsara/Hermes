@@ -1,9 +1,5 @@
-import { HermesApp } from "@/components/hermes-app";
+import { redirect } from "next/navigation";
 
-export default function Home() {
-  return (
-    <main className="bg-background h-screen min-h-0 w-full">
-      <HermesApp />
-    </main>
-  );
+export default function RootPage() {
+  redirect("/chat");
 }

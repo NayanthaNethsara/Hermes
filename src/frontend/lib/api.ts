@@ -8,6 +8,8 @@ import type {
   StreamStatusPayload,
   StreamMetadataPayload,
   StreamDonePayload,
+  SessionSummary,
+  SessionDetails,
 } from "@/types/hermes";
 import {
   AskQuerySchema,
@@ -26,15 +28,21 @@ export interface StreamHandlers {
   onError?: (error: Error) => void;
 }
 
-export async function askHermes(question: string): Promise<HermesResponse> {
-  const validated = AskQuerySchema.parse({ question });
+export async function askHermes(
+  question: string,
+  sessionId?: string
+): Promise<HermesResponse> {
+  const validated = AskQuerySchema.parse({ question, sessionId });
 
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.ASK}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: validated.question }),
+      body: JSON.stringify({
+        question: validated.question,
+        session_id: sessionId || "default",
+      }),
     });
   } catch {
     throw new HermesApiError(
@@ -58,16 +66,20 @@ export async function askHermes(question: string): Promise<HermesResponse> {
 export async function askHermesStream(
   question: string,
   handlers: StreamHandlers,
+  sessionId?: string,
   signal?: AbortSignal
 ): Promise<HermesResponse> {
-  const validated = AskQuerySchema.parse({ question });
+  const validated = AskQuerySchema.parse({ question, sessionId });
 
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.ASK_STREAM}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: validated.question }),
+      body: JSON.stringify({
+        question: validated.question,
+        session_id: sessionId || "default",
+      }),
       signal,
     });
   } catch (err: unknown) {
@@ -225,4 +237,40 @@ export async function fetchVisualDetails(filename: string): Promise<VisualCatalo
   }
 
   return response.json();
+}
+
+export async function fetchSessions(): Promise<SessionSummary[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.SESSIONS}`);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchSessionDetails(sessionId: string): Promise<SessionDetails | null> {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}${API_ENDPOINTS.SESSIONS}/${encodeURIComponent(sessionId)}`
+    );
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}${API_ENDPOINTS.SESSIONS}/${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

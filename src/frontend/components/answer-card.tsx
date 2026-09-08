@@ -272,7 +272,7 @@ export function AnswerCard({
                     onClick={() => setShowReasoning(!showReasoning)}
                     className="text-[11.5px] text-[#71717a] hover:text-white transition-colors cursor-pointer"
                   >
-                    {showReasoning ? "Hide trace" : "Trace"}
+                    {showReasoning ? "Hide trace" : `Trace (${response.reasoning_steps.length} steps)`}
                   </button>
                 )}
               </div>
@@ -367,30 +367,42 @@ export function AnswerCard({
             )}
 
             {showReasoning && response?.reasoning_steps && response.reasoning_steps.length > 0 && (
-              <div className="rounded-xl border border-white/5 bg-[#141416] p-3 space-y-2 text-xs">
-                {response.reasoning_steps.map((step) => (
-                  <div key={step.step} className="flex items-start gap-2 text-[11.5px]">
-                    <span className="font-mono text-[#71717a] shrink-0 mt-0.5">{step.step}.</span>
-                    <div className="flex-1 min-w-0 space-y-0.5">
-                      <p className="text-white font-medium">{step.action}</p>
-                      <div className="text-[#a1a1aa] text-[11px] leading-relaxed">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            p: ({ children }) => <span>{children}</span>,
-                            code: ({ children }) => (
-                              <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10.5px] text-white">
-                                {children}
-                              </code>
-                            ),
-                          }}
-                        >
-                          {cleanWikilinks(step.found)}
-                        </ReactMarkdown>
+              <div className="rounded-xl border border-white/10 bg-[#121214] p-3.5 space-y-3 text-xs">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <span className="text-[11px] font-medium text-white/80 uppercase tracking-wider font-mono">
+                    Agent Investigation Trace
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                    {response.reasoning_steps.length} Steps
+                  </span>
+                </div>
+                <div className="space-y-3 relative before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-px before:bg-white/10">
+                  {response.reasoning_steps.map((step) => (
+                    <div key={step.step} className="relative flex items-start gap-3 pl-0 text-[11.5px]">
+                      <span className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1e1e22] border border-white/20 font-mono text-[10px] text-white font-medium">
+                        {step.step}
+                      </span>
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="text-white font-medium text-[12px]">{step.action}</p>
+                        <div className="text-[#a1a1aa] text-[11px] leading-relaxed bg-white/[0.02] p-2 rounded-lg border border-white/5">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              p: ({ children }) => <span>{children}</span>,
+                              code: ({ children }) => (
+                                <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10.5px] text-white">
+                                  {children}
+                                </code>
+                              ),
+                            }}
+                          >
+                            {cleanWikilinks(step.found)}
+                          </ReactMarkdown>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>

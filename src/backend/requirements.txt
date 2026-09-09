@@ -1,2 +1,0 @@
-# Dependencies are defined in pyproject.toml
--e .
